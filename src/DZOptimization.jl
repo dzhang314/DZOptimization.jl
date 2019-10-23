@@ -1,14 +1,16 @@
 module DZOptimization
 
-export BFGSOptimizer, step!
+export StepObjectiveFunctor, ConstrainedStepObjectiveFunctor,
+    ConstrainedGradientDescentOptimizer, constrained_gradient_descent_optimizer,
+    quadratic_line_search, BFGSOptimizer, step!
 
 using LinearAlgebra: mul!
-using DZLinearAlgebra: norm, dot, identity_matrix!
+using DZLinearAlgebra: norm, norm2, dot, identity_matrix!
 
 ################################################################################
 
 @inline function _qls_best(fb::T, x1::T, f1::T, x2::T, f2::T,
-                           x3::T, f3::T)::Tuple{T,T} where {T <: Real}
+                           x3::T, f3::T)::Tuple{T,T} where {T<:Real}
     xb = zero(T)
     if f1 < fb; xb, fb = x1, f1; end
     if f2 < fb; xb, fb = x2, f2; end
@@ -16,7 +18,7 @@ using DZLinearAlgebra: norm, dot, identity_matrix!
     xb, fb
 end
 
-@inline function _qls_minimum_high(f0::T, f1::T, f2::T)::T where {T <: Number}
+@inline function _qls_minimum_high(f0::T, f1::T, f2::T)::T where {T<:Number}
     q1 = f1 + f1
     q2 = q1 + q1
     q3 = f0 + f0
@@ -25,7 +27,7 @@ end
     (q2 - q3 - q4) / (q5 + q5)
 end
 
-@inline function _qls_minimum_low(f0::T, f1::T, f2::T)::T where {T <: Number}
+@inline function _qls_minimum_low(f0::T, f1::T, f2::T)::T where {T<:Number}
     q1 = f2 + f2
     q2 = q1 + q1
     q3 = f0 + f0
@@ -36,7 +38,7 @@ end
 end
 
 function quadratic_line_search(f::S, f0::T,
-                               x1::T)::Tuple{T,T} where {S, T <: Real}
+                               x1::T)::Tuple{T,T} where {S,T<:Real}
     # TODO: In principle, we could make this work for f0 == +Inf.
     if !isfinite(f0) || !isfinite(x1)
         return zero(T), f0
@@ -76,8 +78,10 @@ function quadratic_line_search(f::S, f0::T,
     end
 end
 
+################################################################################
+
 function update_inverse_hessian!(B_inv::Matrix{T}, h::T, s::Vector{T},
-        y::Vector{T}, t::Vector{T})::Nothing where {T <: Real}
+        y::Vector{T}, t::Vector{T})::Nothing where {T<:Real}
     b = dot(s, y)
     s .*= inv(b)
     mul!(t, B_inv, y)
@@ -94,21 +98,108 @@ end
 
 ################################################################################
 
-struct StepObjectiveFunctor{S, T <: Real}
+struct StepObjectiveFunctor{S,T<:Real,N}
     objective_functor::S
-    base_point::Vector{T}
-    step_point::Vector{T}
-    step_direction::Vector{T}
+    initial_point::Array{T,N}
+    new_point::Array{T,N}
+    step_direction::Array{T,N}
+end
+
+struct ConstrainedStepObjectiveFunctor{S1,S2,T<:Real,N}
+    objective_functor::S1
+    constraint_functor!::S2
+    initial_point::Array{T,N}
+    new_point::Array{T,N}
+    step_direction::Array{T,N}
 end
 
 @inline function (so::StepObjectiveFunctor{S,T})(
-        step_size::T)::T where {S, T <: Real}
-    x, step, dx = so.base_point, so.step_point, so.step_direction
-    n = length(x)
-    @simd ivdep for i = 1 : n
-        @inbounds step[i] = x[i] - step_size * dx[i]
+        step_size::T) where {S,T<:Real}
+    x0, x1, dx = so.initial_point, so.new_point, so.step_direction
+    @simd ivdep for i = 1 : length(x0)
+        @inbounds x1[i] = x0[i] - step_size * dx[i]
     end
-    so.objective_functor(step)
+    return so.objective_functor(x1)
+end
+
+@inline function (cso::ConstrainedStepObjectiveFunctor{S1,S2,T,N})(
+        step_size::T) where {S1,S2,T<:Real,N}
+    x0, x1, dx = cso.initial_point, cso.new_point, cso.step_direction
+    @simd ivdep for i = 1 : length(x0)
+        @inbounds x1[i] = x0[i] - step_size * dx[i]
+    end
+    cso.constraint_functor!(x1)
+    return cso.objective_functor(x1)
+end
+
+################################################################################
+
+struct ConstrainedGradientDescentOptimizer{S1,S2,S3,T<:Real,N}
+    objective_functor::S1
+    gradient_functor!::S2
+    constraint_functor!::S3
+    current_iteration::Vector{Int}
+    current_objective::Vector{T}
+    current_point::Array{T,N}
+    current_gradient::Array{T,N}
+    delta_point::Array{T,N}
+    delta_gradient::Array{T,N}
+    scratch_space::Array{T,N}
+    step_functor::ConstrainedStepObjectiveFunctor{S1,S3,T,N}
+end
+
+function constrained_gradient_descent_optimizer(
+        objective_functor::S1, gradient_functor!::S2, constraint_functor!::S3,
+        initial_point::AbstractArray{T,N}) where {S1,S2,S3,T<:Real,N}
+    current_point = copy(initial_point)
+    constraint_functor!(current_point)
+    current_objective = objective_functor(current_point)
+    current_gradient = similar(current_point)
+    gradient_functor!(current_gradient, current_point)
+    delta_point = zero(current_point)
+    delta_gradient = zero(current_gradient)
+    scratch_space = similar(current_point)
+    step_functor = ConstrainedStepObjectiveFunctor{S1,S3,T,N}(
+        objective_functor, constraint_functor!,
+        current_point, scratch_space, current_gradient)
+    return ConstrainedGradientDescentOptimizer{S1,S2,S3,T,N}(
+        objective_functor, gradient_functor!, constraint_functor!, Int[0],
+        T[current_objective], current_point, current_gradient,
+        delta_point, delta_gradient, scratch_space, step_functor)
+end
+
+function step!(opt::ConstrainedGradientDescentOptimizer{S1,S2,S3,T,N}
+        ) where {S1,S2,S3,T<:Real,N}
+    @inbounds begin
+        x, g, temp = opt.current_point, opt.current_gradient, opt.scratch_space
+        s, y, n = opt.delta_point, opt.delta_gradient, length(x)
+        initial_step_size = dot(s, y) / norm2(y)
+        if !isfinite(initial_step_size)
+            initial_step_size = sqrt(eps(T)) / max(one(T), norm2(g))
+        end
+        step_size, new_objective = quadratic_line_search(
+            opt.step_functor, opt.current_objective[1], initial_step_size)
+        opt.current_iteration[1] += 1
+        opt.current_objective[1] = new_objective
+        @simd ivdep for i = 1 : n
+            temp[i] = x[i] - step_size * g[i]
+        end
+        opt.constraint_functor!(temp)
+        @simd ivdep for i = 1 : n
+            s[i] = temp[i] - x[i]
+        end
+        @simd ivdep for i = 1 : n
+            x[i] = temp[i]
+        end
+        opt.gradient_functor!(temp, x)
+        @simd ivdep for i = 1 : n
+            y[i] = temp[i] - g[i]
+        end
+        @simd ivdep for i = 1 : n
+            g[i] = temp[i]
+        end
+    end
+    return opt
 end
 
 ################################################################################
