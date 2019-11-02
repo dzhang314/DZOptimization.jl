@@ -304,8 +304,8 @@ struct BFGSOptimizer{S1, S2, T <: Real}
     delta_gradient::Vector{T}
     bfgs_dir::Vector{T}
     hess_inv::Matrix{T}
-    grad_functor::StepObjectiveFunctor{S1,T}
-    bfgs_functor::StepObjectiveFunctor{S1,T}
+    grad_functor::StepObjectiveFunctor{S1,T,1}
+    bfgs_functor::StepObjectiveFunctor{S1,T,1}
 end
 
 function BFGSOptimizer(initial_point::Vector{T}, initial_step_size::T,
@@ -324,9 +324,9 @@ function BFGSOptimizer(initial_point::Vector{T}, initial_step_size::T,
         current_point, temp_buffer, T[objective], gradient,
         T[initial_step_size], Vector{T}(undef, num_dims),
         bfgs_dir, hess_inv,
-        StepObjectiveFunctor{S1,T}(objective_functor, current_point,
+        StepObjectiveFunctor{S1,T,1}(objective_functor, current_point,
             temp_buffer, gradient),
-        StepObjectiveFunctor{S1,T}(objective_functor, current_point,
+        StepObjectiveFunctor{S1,T,1}(objective_functor, current_point,
             temp_buffer, bfgs_dir))
 end
 
