@@ -241,15 +241,20 @@ function constrained_lbfgs_optimizer(
         m, step_direction, scratch_space, step_functor)
 end
 
-function DZOptimization.step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
+function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
         ) where {S1,S2,S3,T<:Real,N}
     @inbounds begin
+
+        # Define aliases to opt member variables
         x, g = opt.current_point, opt.current_gradient
         s, y = opt.delta_point, opt.delta_gradient
         S, Y = opt.delta_point_history, opt.delta_gradient_history
         alpha, rho = opt.alpha_history, opt.rho_history
         m, n, temp = opt.history_length, length(x), opt.scratch_space
         q, k = opt.step_direction, opt.current_iteration[1] + 1
+        cur_objective = opt.current_objective[1]
+
+        # Compute step direction
         @simd ivdep for j = 1:n; q[j] = g[j]                      ; end
         for i = k-1 : -1 : max(k-m, 1)
             c = (i - 1) % m + 1
@@ -270,8 +275,17 @@ function DZOptimization.step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
             beta = alpha[c] - rho[c] * d
             @simd ivdep for j = 1:n; q[j] += S[j,c] * beta        ; end
         end
+
+        # Perform line search
         step_size, new_objective = quadratic_line_search(
-            opt.step_functor, opt.current_objective[1], one(T))
+            opt.step_functor, cur_objective, one(T))
+
+        # Did we improve? If not, return early
+        if !(new_objective < cur_objective)
+            return false
+        end
+
+        # If we did improve, accept the step
         opt.current_iteration[1] = k
         opt.current_objective[1] = new_objective
         @simd ivdep for j = 1:n; temp[j] = x[j] - step_size * q[j]; end
@@ -286,7 +300,7 @@ function DZOptimization.step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
         @simd ivdep for j = 1:n; Y[j,c] = y[j]                    ; end
         rho[c] = inv(dot(s, y))
     end
-    return opt
+    return true
 end
 
 ################################################################################
