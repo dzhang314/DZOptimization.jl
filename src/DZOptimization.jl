@@ -267,7 +267,7 @@ function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
         if !isfinite(gamma)
             gamma = sqrt(eps(T)) / max(one(T), norm2(g))
         end
-        @simd ivdep for j = 1:n; q[j] *= gamma; end
+        @simd ivdep for j = 1:n; q[j] *= gamma                    ; end
         for i = max(k-m, 1) : k-1
             c = (i - 1) % m + 1
             d = zero(T)
