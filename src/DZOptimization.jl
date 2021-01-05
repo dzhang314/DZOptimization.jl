@@ -1,6 +1,7 @@
 module DZOptimization
 
-export LineSearchFunctor, BFGSOptimizer, step!, find_saturation_threshold
+export LineSearchFunctor, BFGSOptimizer, step!, find_saturation_threshold,
+    L2RegularizationWrapper, L2GradientWrapper
 
 using LinearAlgebra: mul!
 
@@ -167,6 +168,33 @@ end
     end
     clsf.constraint_functor!(x1)
     return clsf.objective_functor(x1)
+end
+
+######################################################## REGULARIZATION WRAPPERS
+
+struct L2RegularizationWrapper{F,T}
+    wrapped_function::F
+    lambda::T
+end
+
+struct L2GradientWrapper{G,T}
+    wrapped_gradient!::G
+    lambda::T
+end
+
+function (wrapper::L2RegularizationWrapper{F,T})(
+        x::AbstractArray{T,N}) where {F,T,N}
+    return wrapper.wrapped_function(x) + T(0.5) * wrapper.lambda * norm2(x)
+end
+
+function (wrapper::L2GradientWrapper{G,T})(
+        g::AbstractArray{T,N}, x::AbstractArray{T,N}) where {G,T,N}
+    wrapper.wrapped_gradient!(g, x)
+    lambda = wrapper.lambda
+    @simd ivdep for i = 1 : length(g)
+        @inbounds g[i] += lambda * x[i]
+    end
+    return g
 end
 
 ########################################################################### BFGS
