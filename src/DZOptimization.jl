@@ -114,38 +114,37 @@ end
 
 ################################################### LINE SEARCH FUNCTION OBJECTS
 
-struct LineSearchFunctor{S,T<:Real,N}
-    objective_functor::S
+struct LineSearchFunctor{F,T,N}
+    objective_functor::F
     initial_point::Array{T,N}
     new_point::Array{T,N}
     step_direction::Array{T,N}
 end
 
-struct ConstrainedLineSearchFunctor{S1,S2,T<:Real,N}
-    objective_functor::S1
-    constraint_functor!::S2
+struct ConstrainedLineSearchFunctor{F,C,T,N}
+    objective_functor::F
+    constraint_functor!::C
     initial_point::Array{T,N}
     new_point::Array{T,N}
     step_direction::Array{T,N}
 end
 
-@inline function (so::LineSearchFunctor{S,T})(
-        step_size::T) where {S,T<:Real}
-    x0, x1, dx = so.initial_point, so.new_point, so.step_direction
+@inline function (lsf::LineSearchFunctor{F,T,N})(step_size::T) where {F,T,N}
+    x0, x1, dx = lsf.initial_point, lsf.new_point, lsf.step_direction
     @simd ivdep for i = 1 : length(x0)
         @inbounds x1[i] = x0[i] - step_size * dx[i]
     end
-    return so.objective_functor(x1)
+    return lsf.objective_functor(x1)
 end
 
-@inline function (cso::ConstrainedLineSearchFunctor{S1,S2,T,N})(
-        step_size::T) where {S1,S2,T<:Real,N}
-    x0, x1, dx = cso.initial_point, cso.new_point, cso.step_direction
+@inline function (clsf::ConstrainedLineSearchFunctor{F,C,T,N})(
+        step_size::T) where {F,C,T,N}
+    x0, x1, dx = clsf.initial_point, clsf.new_point, clsf.step_direction
     @simd ivdep for i = 1 : length(x0)
         @inbounds x1[i] = x0[i] - step_size * dx[i]
     end
-    cso.constraint_functor!(x1)
-    return cso.objective_functor(x1)
+    clsf.constraint_functor!(x1)
+    return clsf.objective_functor(x1)
 end
 
 ########################################################################### BFGS
