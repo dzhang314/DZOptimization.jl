@@ -1,12 +1,46 @@
 module DZOptimization
 
-export LineSearchFunctor, ConstrainedLineSearchFunctor,
-    ConstrainedGradientDescentOptimizer, constrained_gradient_descent_optimizer,
-    ConstrainedLBFGSOptimizer, constrained_lbfgs_optimizer,
-    quadratic_line_search, BFGSOptimizer, step!
+export LineSearchFunctor, BFGSOptimizer, step!
 
 using LinearAlgebra: mul!
-using DZLinearAlgebra: norm, norm2, dot, identity_matrix!
+
+########################################################## UNSAFE LINEAR ALGEBRA
+
+@inline unsafe_sqrt(x::Float32) = Base.sqrt_llvm(x)
+@inline unsafe_sqrt(x::Float64) = Base.sqrt_llvm(x)
+@inline unsafe_sqrt(x::T) where {T<:Number} = sqrt(x)
+
+@inline function norm2(x::AbstractArray{T,N}) where {T,N}
+    result = zero(float(real(T)))
+    @simd for i = 1 : length(x)
+        @inbounds result += abs2(x[i])
+    end
+    return result
+end
+
+@inline function norm(x::AbstractArray{T,N}) where {T,N}
+    return unsafe_sqrt(norm2(x))
+end
+
+
+@inline function dot(v::AbstractArray{T,N},
+                     w::AbstractArray{T,N}) where {T,N}
+    result = zero(T)
+    @simd ivdep for i = 1 : length(v)
+        @inbounds result += conj(v[i]) * w[i]
+    end
+    result
+end
+
+@inline function identity_matrix!(A::AbstractMatrix{T}) where {T}
+    m, n = size(A)
+    for j = 1 : n
+        @simd ivdep for i = 1 : m
+            @inbounds A[i,j] = ifelse(i == j, one(T), zero(T))
+        end
+    end
+    return A
+end
 
 ######################################################### LINE SEARCH ALGORITHMS
 
@@ -524,5 +558,7 @@ function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
     end
     return true
 end
+
+################################################################################
 
 end # module DZOptimization

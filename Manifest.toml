@@ -1,12 +1,5 @@
 # This file is machine-generated - editing it directly is not advised
 
-[[DZLinearAlgebra]]
-git-tree-sha1 = "bdca7a71f9d1eae01cd5fd92234f3c8a41ce893d"
-repo-rev = "master"
-repo-url = "https://github.com/dzhang314/DZLinearAlgebra.jl"
-uuid = "6f20c22c-3052-42e0-aac1-b2428640d1cc"
-version = "0.1.0"
-
 [[Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 
