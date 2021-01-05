@@ -1,6 +1,6 @@
 module DZOptimization
 
-export LineSearchFunctor, BFGSOptimizer, step!
+export LineSearchFunctor, BFGSOptimizer, step!, find_saturation_threshold
 
 using LinearAlgebra: mul!
 
@@ -386,6 +386,100 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T <: Real}
     end
 
     return opt
+end
+
+################################################################## MODEL FITTING
+
+function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
+
+    n = length(data)
+
+    @inbounds sx, sy = data[1]
+    sxx = sx * sx
+    sxy = sx * sy
+
+    y_mean = zero(T)
+    @inbounds y_norm = sy^2
+    @simd ivdep for i = 2 : n
+        @inbounds y_mean += data[i][2]
+        @inbounds y_norm += data[i][2]^2
+    end
+    y_mean /= (n - 1)
+
+    best_loss = typemax(T)
+    best_threshold = zero(T)
+    best_slope = zero(T)
+    best_mean = zero(T)
+
+    for i = 2 : n-1
+
+        @inbounds xi, yi = data[i]
+        sx += xi
+        sy += yi
+        sxx += xi * xi
+        sxy += xi * yi
+
+        y_mean = (y_mean * (n - i + 1) - yi) / (n - i)
+
+        @inbounds lower = data[i][1]
+        threshold = lower
+        begin
+            slope = (i * y_mean - sy) / (i * threshold - sx)
+            loss = T(0.5) * (
+                y_norm
+                + slope^2 * sxx
+                - i * (y_mean - slope * threshold)^2
+                - (n - i) * y_mean^2
+            ) - slope * sxy
+            if loss < best_loss
+                best_loss = loss
+                best_threshold = threshold
+                best_slope = slope
+                best_mean = y_mean
+            end
+        end
+
+        @inbounds upper = data[i+1][1]
+        threshold = upper
+        begin
+            slope = (i * y_mean - sy) / (i * threshold - sx)
+            loss = T(0.5) * (
+                y_norm
+                + slope^2 * sxx
+                - i * (y_mean - slope * threshold)^2
+                - (n - i) * y_mean^2
+            ) - slope * sxy
+            if loss < best_loss
+                best_loss = loss
+                best_threshold = threshold
+                best_slope = slope
+                best_mean = y_mean
+            end
+        end
+
+        a = i * sxx - sx * sx
+        b = i * sxy - sx * sy
+        c = sx * sxy - sxx * sy
+        threshold = (c / b) + (a / b) * y_mean
+        if lower <= threshold <= upper
+            slope = (i * y_mean - sy) / (i * threshold - sx)
+            loss = T(0.5) * (
+                y_norm
+                + slope^2 * sxx
+                - i * (y_mean - slope * threshold)^2
+                - (n - i) * y_mean^2
+            ) - slope * sxy
+            if loss < best_loss
+                best_loss = loss
+                best_threshold = threshold
+                best_slope = slope
+                best_mean = y_mean
+            end
+        end
+
+    end
+    return (best_threshold, best_slope, best_mean, best_loss)
+
 end
 
 ################################################################################
