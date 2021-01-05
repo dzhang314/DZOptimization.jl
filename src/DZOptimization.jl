@@ -22,6 +22,28 @@ end
     return unsafe_sqrt(norm2(x))
 end
 
+@inline function normalize!(x::AbstractArray{T,N}) where {T,N}
+    a = inv(norm(x))
+    @simd ivdep for i = 1 : length(x)
+        @inbounds x[i] *= a
+    end
+    return x
+end
+
+function normalize_columns!(A::AbstractMatrix{T}) where {T}
+    m, n = size(A)
+    @inbounds for j = 1 : n
+        norm_sq = zero(real(T))
+        @simd ivdep for i = 1 : m
+            norm_sq += abs2(A[i,j])
+        end
+        inv_norm = inv(unsafe_sqrt(norm_sq))
+        @simd ivdep for i = 1 : m
+            A[i,j] *= inv_norm
+        end
+    end
+    return A
+end
 
 @inline function dot(v::AbstractArray{T,N},
                      w::AbstractArray{T,N}) where {T,N}
