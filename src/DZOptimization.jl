@@ -1,6 +1,6 @@
 module DZOptimization
 
-export StepObjectiveFunctor, ConstrainedStepObjectiveFunctor,
+export LineSearchFunctor, ConstrainedLineSearchFunctor,
     ConstrainedGradientDescentOptimizer, constrained_gradient_descent_optimizer,
     ConstrainedLBFGSOptimizer, constrained_lbfgs_optimizer,
     quadratic_line_search, BFGSOptimizer, step!
@@ -8,38 +8,37 @@ export StepObjectiveFunctor, ConstrainedStepObjectiveFunctor,
 using LinearAlgebra: mul!
 using DZLinearAlgebra: norm, norm2, dot, identity_matrix!
 
-################################################################################
+######################################################### LINE SEARCH ALGORITHMS
 
-@inline function _qls_best(fb::T, x1::T, f1::T, x2::T, f2::T,
-                           x3::T, f3::T)::Tuple{T,T} where {T<:Real}
+@inline function _qls_best(fb::T, x1::T, f1::T,
+                           x2::T, f2::T, x3::T, f3::T) where {T}
     xb = zero(T)
     if f1 < fb; xb, fb = x1, f1; end
     if f2 < fb; xb, fb = x2, f2; end
     if f3 < fb; xb, fb = x3, f3; end
-    xb, fb
+    return (xb, fb)
 end
 
-@inline function _qls_minimum_high(f0::T, f1::T, f2::T)::T where {T<:Number}
+@inline function _qls_minimum_high(f0::T, f1::T, f2::T) where {T}
     q1 = f1 + f1
     q2 = q1 + q1
     q3 = f0 + f0
     q4 = f2 + f0
     q5 = q1 - q4
-    (q2 - q3 - q4) / (q5 + q5)
+    return (q2 - q3 - q4) / (q5 + q5)
 end
 
-@inline function _qls_minimum_low(f0::T, f1::T, f2::T)::T where {T<:Number}
+@inline function _qls_minimum_low(f0::T, f1::T, f2::T)::T where {T}
     q1 = f2 + f2
     q2 = q1 + q1
     q3 = f0 + f0
     q4 = f0 + f1
     q5 = q4 - q1
     q6 = q5 + q5
-    (q4 + q3 - q2) / (q6 + q6)
+    return (q4 + q3 - q2) / (q6 + q6)
 end
 
-function quadratic_line_search(f::S, f0::T,
-                               x1::T)::Tuple{T,T} where {S,T<:Real}
+function quadratic_line_search(f::F, f0::T, x1::T) where {F,T}
     # TODO: In principle, we could make this work for f0 == +Inf.
     if !isfinite(f0) || !isfinite(x1)
         return zero(T), f0
@@ -66,7 +65,7 @@ function quadratic_line_search(f::S, f0::T,
             x2 = T(0.5) * x1
             f2 = f(x2)
             if isnan(f2)
-                return zero(T), f0
+                return (zero(T), f0)
             end
             if f2 <= f0
                 x3 = x1 * _qls_minimum_low(f0, f1, f2)
@@ -79,34 +78,16 @@ function quadratic_line_search(f::S, f0::T,
     end
 end
 
-################################################################################
+################################################### LINE SEARCH FUNCTION OBJECTS
 
-function update_inverse_hessian!(B_inv::Matrix{T}, h::T, s::Vector{T},
-        y::Vector{T}, t::Vector{T})::Nothing where {T<:Real}
-    b = dot(s, y)
-    s .*= inv(b)
-    mul!(t, B_inv, y)
-    a = h * b + dot(y, t)
-    n = size(B_inv, 1)
-    @inbounds for j = 1 : n
-        sj = s[j]
-        tj = t[j]
-        @simd ivdep for i = 1 : n
-            B_inv[i, j] += a * (s[i] * sj) - (t[i] * sj + s[i] * tj)
-        end
-    end
-end
-
-################################################################################
-
-struct StepObjectiveFunctor{S,T<:Real,N}
+struct LineSearchFunctor{S,T<:Real,N}
     objective_functor::S
     initial_point::Array{T,N}
     new_point::Array{T,N}
     step_direction::Array{T,N}
 end
 
-struct ConstrainedStepObjectiveFunctor{S1,S2,T<:Real,N}
+struct ConstrainedLineSearchFunctor{S1,S2,T<:Real,N}
     objective_functor::S1
     constraint_functor!::S2
     initial_point::Array{T,N}
@@ -114,7 +95,7 @@ struct ConstrainedStepObjectiveFunctor{S1,S2,T<:Real,N}
     step_direction::Array{T,N}
 end
 
-@inline function (so::StepObjectiveFunctor{S,T})(
+@inline function (so::LineSearchFunctor{S,T})(
         step_size::T) where {S,T<:Real}
     x0, x1, dx = so.initial_point, so.new_point, so.step_direction
     @simd ivdep for i = 1 : length(x0)
@@ -123,7 +104,7 @@ end
     return so.objective_functor(x1)
 end
 
-@inline function (cso::ConstrainedStepObjectiveFunctor{S1,S2,T,N})(
+@inline function (cso::ConstrainedLineSearchFunctor{S1,S2,T,N})(
         step_size::T) where {S1,S2,T<:Real,N}
     x0, x1, dx = cso.initial_point, cso.new_point, cso.step_direction
     @simd ivdep for i = 1 : length(x0)
@@ -131,6 +112,215 @@ end
     end
     cso.constraint_functor!(x1)
     return cso.objective_functor(x1)
+end
+
+########################################################################### BFGS
+
+@enum StepType begin
+    NullStep
+    GradientDescentStep
+    BFGSStep
+end
+
+struct BFGSOptimizer{F,G,T}
+    num_dims::Int
+    objective_function::F
+    gradient_function!::G
+    iteration_count::Array{Int,0}
+    has_converged::Array{Bool,0}
+    current_point::Vector{T}
+    current_objective_value::Array{T,0}
+    current_gradient::Vector{T}
+    approximate_inverse_hessian::Matrix{T}
+    last_step_size::Array{T,0}
+    last_step_type::Array{StepType,0}
+    next_step_direction::Vector{T}
+    _temp_buffer::Vector{T}
+    _delta_gradient::Vector{T}
+    _gradient_line_search_functor::LineSearchFunctor{F,T,1}
+    _bfgs_line_search_functor::LineSearchFunctor{F,T,1}
+end
+
+function BFGSOptimizer(objective_function::F,
+                       gradient_function!::G,
+                       initial_point::Vector{T},
+                       initial_step_size::T) where {F,G,T}
+    num_dims = length(initial_point)
+    current_point = copy(initial_point)
+    current_objective_value = objective_function(current_point)
+    current_gradient = Vector{T}(undef, num_dims)
+    gradient_function!(current_gradient, current_point)
+    next_step_direction = copy(current_gradient)
+    _temp_buffer = Vector{T}(undef, num_dims)
+    return BFGSOptimizer{F,G,T}(
+        num_dims,
+        objective_function,
+        gradient_function!,
+        fill(0),
+        fill(false),
+        current_point,
+        fill(current_objective_value),
+        current_gradient,
+        identity_matrix!(Matrix{T}(undef, num_dims, num_dims)),
+        fill(initial_step_size),
+        fill(NullStep),
+        next_step_direction,
+        _temp_buffer,
+        Vector{T}(undef, num_dims),
+        LineSearchFunctor{F,T,1}(objective_function,
+            current_point, _temp_buffer, current_gradient),
+        LineSearchFunctor{F,T,1}(objective_function,
+            current_point, _temp_buffer, next_step_direction)
+    )
+end
+
+function BFGSOptimizer(::Type{T}, opt::BFGSOptimizer{F,G,U}) where {F,G,T,U}
+    current_point = T.(opt.current_point)
+    current_objective_value = objective_function(current_point)
+    current_gradient = Vector{T}(undef, opt.num_dims)
+    gradient_function!(current_gradient, current_point)
+    next_step_direction = T.(opt.next_step_direction)
+    _temp_buffer = Vector{T}(undef, opt.num_dims)
+    return BFGSOptimizer{F,G,T}(
+        opt.num_dims,
+        objective_function,
+        gradient_function!,
+        fill(opt.iteration_count[]),
+        fill(false),
+        current_point,
+        fill(current_objective_value),
+        current_gradient,
+        T.(opt.approximate_inverse_hessian),
+        fill(T(opt.last_step_size[])),
+        fill(opt.last_step_type[]),
+        next_step_direction,
+        _temp_buffer,
+        T.(opt._delta_gradient),
+        LineSearchFunctor{F,T,1}(objective_function,
+            current_point, _temp_buffer, current_gradient),
+        LineSearchFunctor{F,T,1}(objective_function,
+            current_point, _temp_buffer, next_step_direction)
+    )
+end
+
+function update_inverse_hessian!(
+        inv_hess::Matrix{T}, step_size::T, step_direction::Vector{T},
+        delta_gradient::Vector{T}, temp_buffer::Vector{T}) where {T}
+    overlap = dot(step_direction, delta_gradient)
+    step_direction .*= inv(overlap)
+    mul!(temp_buffer, inv_hess, delta_gradient)
+    delta_norm = step_size * overlap + dot(delta_gradient, temp_buffer)
+    n = size(inv_hess, 1)
+    @inbounds for j = 1 : n
+        sj = step_direction[j]
+        tj = temp_buffer[j]
+        @simd ivdep for i = 1 : n
+            inv_hess[i, j] += (
+                delta_norm * (step_direction[i] * sj)
+                - (temp_buffer[i] * sj + step_direction[i] * tj))
+        end
+    end
+end
+
+function nanmin(a::T, b::T) where {T}
+    if isnan(a)
+        return b
+    elseif isnan(b)
+        return a
+    else
+        return min(a, b)
+    end
+end
+
+function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T <: Real}
+
+    # Abbreviated names for brevity
+    n, x, dg = opt.num_dims, opt.current_point, opt._delta_gradient
+
+    # We actually run two independent line searches on each iteration:
+    # one in the quasi-Newton (Hessian)^-1 * (-gradient) direction, and one
+    # in the raw (-gradient) direction. The idea is that the BFGS algorithm
+    # attempts to incrementally build an approximation to the inverse Hessian.
+    # However, if we spend a long time in one region of search space, then
+    # quickly move to a different region, our previous Hessian approximation
+    # may become unhelpful. By performing this "competitive line search"
+    # procedure, we can detect whether this occurs and reset the Hessian
+    # when necessary.
+
+    # Use the previous step size as the initial guess for line search
+    step_size = opt.last_step_size[]
+
+    # Launch line search in raw (-gradient) direction
+    grad_dir = opt.current_gradient
+    grad_norm = norm(grad_dir)
+    grad_step_size, grad_obj = quadratic_line_search(
+        opt._gradient_line_search_functor,
+        opt.current_objective_value[], step_size / grad_norm)
+
+    # Launch line search in BFGS (Hessian)^-1 * (-gradient) direction
+    bfgs_dir = opt.next_step_direction
+    bfgs_norm = norm(bfgs_dir)
+    bfgs_step_size, bfgs_obj = quadratic_line_search(
+        opt._bfgs_line_search_functor,
+        opt.current_objective_value[], step_size / bfgs_norm)
+
+    # We have converged if neither line search reduces the objective function
+    opt.has_converged[] = !(
+        nanmin(bfgs_obj, grad_obj) < opt.current_objective_value[])
+    if opt.has_converged[]; return opt; end
+    opt.iteration_count[] += 1
+
+    if bfgs_obj <= grad_obj
+
+        # Accept BFGS step
+        opt.current_objective_value[] = bfgs_obj
+        opt.last_step_size[] = bfgs_step_size * bfgs_norm
+        opt.last_step_type[] = BFGSStep
+
+        # Update point, gradient, and delta_gradient
+        @simd ivdep for i = 1 : n
+            @inbounds x[i] -= bfgs_step_size * bfgs_dir[i]
+        end
+        @simd ivdep for i = 1 : n
+            @inbounds dg[i] = -grad_dir[i]
+        end
+        opt.gradient_function!(grad_dir, x)
+        @simd ivdep for i = 1 : n
+            @inbounds dg[i] += grad_dir[i]
+        end
+
+        # Update inverse Hessian approximation using delta_gradient
+        update_inverse_hessian!(opt.approximate_inverse_hessian,
+            -bfgs_step_size, bfgs_dir, dg, opt._temp_buffer)
+
+        # Compute next step direction using approximate inverse Hessian
+        mul!(bfgs_dir, opt.approximate_inverse_hessian, grad_dir)
+
+    else
+
+        # Accept gradient descent step
+        opt.current_objective_value[] = grad_obj
+        opt.last_step_size[] = grad_step_size * grad_norm
+        opt.last_step_type[] = GradientDescentStep
+
+        # Update point and gradient (no need to update delta_gradient,
+        # since we'll reset the approximate inverse Hessian)
+        @simd ivdep for i = 1 : n
+            @inbounds x[i] -= grad_step_size * grad_dir[i]
+        end
+        opt.gradient_function!(grad_dir, x)
+
+        # Reset approximate inverse Hessian to the identity matrix
+        identity_matrix!(opt.approximate_inverse_hessian)
+
+        # Reset next step direction to gradient
+        @simd ivdep for i = 1 : n
+            @inbounds bfgs_dir[i] = grad_dir[i]
+        end
+
+    end
+
+    return opt
 end
 
 ################################################################################
@@ -146,7 +336,7 @@ struct ConstrainedGradientDescentOptimizer{S1,S2,S3,T<:Real,N}
     delta_point::Array{T,N}
     delta_gradient::Array{T,N}
     scratch_space::Array{T,N}
-    step_functor::ConstrainedStepObjectiveFunctor{S1,S3,T,N}
+    step_functor::ConstrainedLineSearchFunctor{S1,S3,T,N}
 end
 
 function constrained_gradient_descent_optimizer(
@@ -160,7 +350,7 @@ function constrained_gradient_descent_optimizer(
     delta_point = zero(current_point)
     delta_gradient = zero(current_gradient)
     scratch_space = similar(current_point)
-    step_functor = ConstrainedStepObjectiveFunctor{S1,S3,T,N}(
+    step_functor = ConstrainedLineSearchFunctor{S1,S3,T,N}(
         objective_functor, constraint_functor!,
         current_point, scratch_space, current_gradient)
     return ConstrainedGradientDescentOptimizer{S1,S2,S3,T,N}(
@@ -213,7 +403,7 @@ struct ConstrainedLBFGSOptimizer{S1,S2,S3,T<:Real,N}
     history_length::Int
     step_direction::Array{T,N}
     scratch_space::Array{T,N}
-    step_functor::ConstrainedStepObjectiveFunctor{S1,S3,T,N}
+    step_functor::ConstrainedLineSearchFunctor{S1,S3,T,N}
 end
 
 function constrained_lbfgs_optimizer(
@@ -228,7 +418,7 @@ function constrained_lbfgs_optimizer(
     delta_gradient = zero(current_gradient)
     step_direction = similar(current_point)
     scratch_space = similar(current_point)
-    step_functor = ConstrainedStepObjectiveFunctor{S1,S3,T,N}(
+    step_functor = ConstrainedLineSearchFunctor{S1,S3,T,N}(
         objective_functor, constraint_functor!,
         current_point, scratch_space, step_direction)
     return ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}(
@@ -301,97 +491,6 @@ function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
         rho[c] = inv(dot(s, y))
     end
     return true
-end
-
-################################################################################
-
-struct BFGSOptimizer{S1, S2, T <: Real}
-    num_dims::Int
-    iteration::Vector{Int}
-    objective_functor::S1
-    gradient_functor!::S2
-    current_point::Vector{T}
-    temp_buffer::Vector{T}
-    objective::Vector{T}
-    gradient::Vector{T}
-    last_step_size::Vector{T}
-    delta_gradient::Vector{T}
-    bfgs_dir::Vector{T}
-    hess_inv::Matrix{T}
-    grad_functor::StepObjectiveFunctor{S1,T,1}
-    bfgs_functor::StepObjectiveFunctor{S1,T,1}
-end
-
-function BFGSOptimizer(initial_point::Vector{T}, initial_step_size::T,
-        objective_functor::S1, gradient_functor!::S2) where {S1, S2, T <: Real}
-    num_dims = length(initial_point)
-    current_point = copy(initial_point)
-    temp_buffer = Vector{T}(undef, num_dims)
-    objective = objective_functor(current_point)
-    gradient = Vector{T}(undef, num_dims)
-    gradient_functor!(gradient, current_point)
-    bfgs_dir = copy(gradient)
-    hess_inv = Matrix{T}(undef, num_dims, num_dims)
-    identity_matrix!(hess_inv)
-    BFGSOptimizer{S1,S2,T}(num_dims, Int[0],
-        objective_functor, gradient_functor!,
-        current_point, temp_buffer, T[objective], gradient,
-        T[initial_step_size], Vector{T}(undef, num_dims),
-        bfgs_dir, hess_inv,
-        StepObjectiveFunctor{S1,T,1}(objective_functor, current_point,
-            temp_buffer, gradient),
-        StepObjectiveFunctor{S1,T,1}(objective_functor, current_point,
-            temp_buffer, bfgs_dir))
-end
-
-function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T <: Real}
-    @inbounds step_size, objective = opt.last_step_size[1], opt.objective[1]
-    grad_dir, bfgs_dir = opt.gradient, opt.bfgs_dir
-    delta_grad, hess_inv = opt.delta_gradient, opt.hess_inv
-    x, n = opt.current_point, opt.num_dims
-    grad_norm, bfgs_norm = norm(grad_dir), norm(bfgs_dir)
-    grad_step_size, grad_obj = quadratic_line_search(
-        opt.grad_functor, objective, step_size / grad_norm)
-    bfgs_step_size, bfgs_obj = quadratic_line_search(
-        opt.bfgs_functor, objective, step_size / bfgs_norm)
-    if bfgs_obj <= grad_obj
-        if !(bfgs_obj < objective)
-            return true, false
-        end
-        @inbounds opt.objective[1] = bfgs_obj
-        @inbounds opt.last_step_size[1] = bfgs_step_size * bfgs_norm
-        @simd ivdep for i = 1 : n
-            @inbounds x[i] -= bfgs_step_size * bfgs_dir[i]
-        end
-        @simd ivdep for i = 1 : n
-            @inbounds delta_grad[i] = -grad_dir[i]
-        end
-        opt.gradient_functor!(grad_dir, x)
-        @simd ivdep for i = 1 : n
-            @inbounds delta_grad[i] += grad_dir[i]
-        end
-        update_inverse_hessian!(hess_inv, -bfgs_step_size, bfgs_dir,
-            delta_grad, opt.temp_buffer)
-        mul!(bfgs_dir, hess_inv, grad_dir)
-        @inbounds opt.iteration[1] += 1
-        return true, true
-    else
-        if !(grad_obj < objective)
-            return false, false
-        end
-        @inbounds opt.objective[1] = grad_obj
-        @inbounds opt.last_step_size[1] = grad_step_size * grad_norm
-        @simd ivdep for i = 1 : n
-            @inbounds x[i] -= grad_step_size * grad_dir[i]
-        end
-        identity_matrix!(hess_inv)
-        opt.gradient_functor!(grad_dir, x)
-        @simd ivdep for i = 1 : n
-            @inbounds bfgs_dir[i] = grad_dir[i]
-        end
-        @inbounds opt.iteration[1] += 1
-        return false, true
-    end
 end
 
 end # module DZOptimization
