@@ -176,12 +176,44 @@ end
 
 function BFGSOptimizer(::Type{T}, opt::BFGSOptimizer{F,G,U}) where {F,G,T,U}
     current_point = T.(opt.current_point)
+    current_objective_value = opt.objective_function(current_point)
+    current_gradient = Vector{T}(undef, opt.num_dims)
+    opt.gradient_function!(current_gradient, current_point)
+    next_step_direction = T.(opt.next_step_direction)
+    _temp_buffer = Vector{T}(undef, opt.num_dims)
+    return BFGSOptimizer{F,G,T}(
+        opt.num_dims,
+        opt.objective_function,
+        opt.gradient_function!,
+        fill(opt.iteration_count[]),
+        fill(false),
+        current_point,
+        fill(current_objective_value),
+        current_gradient,
+        T.(opt.approximate_inverse_hessian),
+        fill(T(opt.last_step_size[])),
+        fill(opt.last_step_type[]),
+        next_step_direction,
+        _temp_buffer,
+        T.(opt._delta_gradient),
+        LineSearchFunctor{F,T,1}(opt.objective_function,
+            current_point, _temp_buffer, current_gradient),
+        LineSearchFunctor{F,T,1}(opt.objective_function,
+            current_point, _temp_buffer, next_step_direction)
+    )
+end
+
+function BFGSOptimizer(objective_function::F1,
+                       gradient_function!::G1,
+                       ::Type{T},
+                       opt::BFGSOptimizer{F2,G2,U}) where {F1,G1,F2,G2,T,U}
+    current_point = T.(opt.current_point)
     current_objective_value = objective_function(current_point)
     current_gradient = Vector{T}(undef, opt.num_dims)
     gradient_function!(current_gradient, current_point)
     next_step_direction = T.(opt.next_step_direction)
     _temp_buffer = Vector{T}(undef, opt.num_dims)
-    return BFGSOptimizer{F,G,T}(
+    return BFGSOptimizer{F1,G1,T}(
         opt.num_dims,
         objective_function,
         gradient_function!,
@@ -196,9 +228,9 @@ function BFGSOptimizer(::Type{T}, opt::BFGSOptimizer{F,G,U}) where {F,G,T,U}
         next_step_direction,
         _temp_buffer,
         T.(opt._delta_gradient),
-        LineSearchFunctor{F,T,1}(objective_function,
+        LineSearchFunctor{F1,T,1}(objective_function,
             current_point, _temp_buffer, current_gradient),
-        LineSearchFunctor{F,T,1}(objective_function,
+        LineSearchFunctor{F1,T,1}(objective_function,
             current_point, _temp_buffer, next_step_direction)
     )
 end
