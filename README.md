@@ -47,39 +47,20 @@ end
 Compared to [Optim.jl](http://julianlsolvers.github.io/Optim.jl/stable/), the BFGS implementation in **DZOptimization.jl** is 6x faster and uses 10x less memory to minimize the [Rosenbrock function](https://en.wikipedia.org/wiki/Rosenbrock_function).
 
 ```
-using BenchmarkTools
-@benchmark begin
-    opt = BFGSOptimizer(rosenbrock_objective,
-                        rosenbrock_gradient!,
-                        rand(2), 1.0)
-    while !opt.has_converged[]; step!(opt); end
-end
-
-# BenchmarkTools.Trial: 
-#   memory estimate:  1.14 KiB
-#   allocs estimate:  12
-#   --------------
-#   minimum time:     2.800 μs (0.00% GC)
-#   median time:      5.563 μs (0.00% GC)
-#   mean time:        5.374 μs (0.64% GC)
-#   maximum time:     182.925 μs (95.70% GC)
-```
-
-```
-using Optim
-@benchmark optimize(rosenbrock_objective,
-                    rosenbrock_gradient!,
-                    rand(2), BFGS())
-
-# BenchmarkTools.Trial: 
-#   memory estimate:  9.88 KiB
-#   allocs estimate:  163
-#   --------------
-#   minimum time:     8.599 μs (0.00% GC)
-#   median time:      30.300 μs (0.00% GC)
-#   mean time:        31.826 μs (4.44% GC)
-#   maximum time:     3.824 ms (98.29% GC)
-#   --------------
-#   samples:          10000
-#   evals/sample:     1
+using BenchmarkTools                            | using Optim
+@benchmark begin                                |
+    opt = BFGSOptimizer(rosenbrock_objective,   | @benchmark optimize(rosenbrock_objective,
+                        rosenbrock_gradient!,   |                     rosenbrock_gradient!,
+                        rand(2), 1.0)           |                     rand(2), BFGS())
+    while !opt.has_converged[]; step!(opt); end |
+end                                             |
+                                                |
+# BenchmarkTools.Trial:                         | # BenchmarkTools.Trial: 
+#   memory estimate:  1.14 KiB                  | #   memory estimate:  9.88 KiB
+#   allocs estimate:  12                        | #   allocs estimate:  163
+#   --------------                              | #   --------------
+#   minimum time:     2.800 μs (0.00% GC)       | #   minimum time:     8.599 μs (0.00% GC)
+#   median time:      5.563 μs (0.00% GC)       | #   median time:      30.300 μs (0.00% GC)
+#   mean time:        5.374 μs (0.64% GC)       | #   mean time:        31.826 μs (4.44% GC)
+#   maximum time:     182.925 μs (95.70% GC)    | #   maximum time:     3.824 ms (98.29% GC)
 ```
