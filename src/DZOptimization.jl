@@ -337,17 +337,7 @@ function update_inverse_hessian!(
     end
 end
 
-function nanmin(a::T, b::T) where {T}
-    if isnan(a)
-        return b
-    elseif isnan(b)
-        return a
-    else
-        return min(a, b)
-    end
-end
-
-function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T <: Real}
+function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T}
 
     # Abbreviated names for brevity
     n, x, dg = opt.num_dims, opt.current_point, opt._delta_gradient
@@ -371,6 +361,7 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T <: Real}
     grad_step_size, grad_obj = quadratic_line_search(
         opt._gradient_line_search_functor,
         opt.current_objective_value[], step_size / grad_norm)
+    if isnan(grad_obj); grad_obj = typemax(T); end
 
     # Launch line search in BFGS (Hessian)^-1 * (-gradient) direction
     bfgs_dir = opt.next_step_direction
@@ -378,10 +369,11 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T <: Real}
     bfgs_step_size, bfgs_obj = quadratic_line_search(
         opt._bfgs_line_search_functor,
         opt.current_objective_value[], step_size / bfgs_norm)
+    if isnan(bfgs_obj); bfgs_obj = typemax(T); end
 
     # We have converged if neither line search reduces the objective function
     opt.has_converged[] = !(
-        nanmin(bfgs_obj, grad_obj) < opt.current_objective_value[])
+        min(bfgs_obj, grad_obj) < opt.current_objective_value[])
     if opt.has_converged[]; return opt; end
     opt.iteration_count[] += 1
 
