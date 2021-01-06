@@ -12,6 +12,8 @@ Unlike traditional optimization libraries which only provide a black-box `optimi
 * run multiple optimizers in parallel, and
 * terminate optimization whenever you want (as opposed to a [predetermined list of convergence criteria](https://github.com/JuliaOpt/NLopt.jl#using-with-mathoptinterface)).
 
+**DZOptimization.jl** is designed to minimize overhead. It uses static data structures and in-place algorithms to ensure that memory is **never** dynamically allocated (outside of optimizer constructors). This makes **DZOptimization.jl** especially suitable for both small-scale optimization problems, since repeatedly allocating small vectors is wasteful, and large-scale optimization problems, since memory usage will never shoot up unexpectedly.
+
 
 ## Usage Example
 
