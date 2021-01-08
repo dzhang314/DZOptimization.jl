@@ -5,6 +5,8 @@ export LineSearchFunctor, BFGSOptimizer, step!, find_saturation_threshold,
 
 using LinearAlgebra: mul!
 
+include("./ExampleFunctions.jl")
+
 ########################################################## UNSAFE LINEAR ALGEBRA
 
 @inline unsafe_sqrt(x::Float32) = Base.sqrt_llvm(x)
