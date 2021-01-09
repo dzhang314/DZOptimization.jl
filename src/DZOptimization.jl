@@ -7,11 +7,14 @@ using LinearAlgebra: mul!
 
 include("./ExampleFunctions.jl")
 
+
 ########################################################## UNSAFE LINEAR ALGEBRA
+
 
 @inline unsafe_sqrt(x::Float32) = Base.sqrt_llvm(x)
 @inline unsafe_sqrt(x::Float64) = Base.sqrt_llvm(x)
 @inline unsafe_sqrt(x::T) where {T<:Number} = sqrt(x)
+
 
 @inline function norm2(x::AbstractArray{T,N}) where {T,N}
     result = zero(float(real(T)))
@@ -21,9 +24,11 @@ include("./ExampleFunctions.jl")
     return result
 end
 
+
 @inline function norm(x::AbstractArray{T,N}) where {T,N}
     return unsafe_sqrt(norm2(x))
 end
+
 
 @inline function normalize!(x::AbstractArray{T,N}) where {T,N}
     a = inv(norm(x))
@@ -32,6 +37,7 @@ end
     end
     return x
 end
+
 
 function normalize_columns!(A::AbstractMatrix{T}) where {T}
     m, n = size(A)
@@ -48,6 +54,7 @@ function normalize_columns!(A::AbstractMatrix{T}) where {T}
     return A
 end
 
+
 @inline function dot(v::AbstractArray{T,N},
                      w::AbstractArray{T,N}) where {T,N}
     result = zero(T)
@@ -56,6 +63,7 @@ end
     end
     result
 end
+
 
 @inline function identity_matrix!(A::AbstractMatrix{T}) where {T}
     m, n = size(A)
@@ -67,7 +75,9 @@ end
     return A
 end
 
+
 ######################################################### LINE SEARCH ALGORITHMS
+
 
 @inline function _qls_best(fb::T, x1::T, f1::T,
                            x2::T, f2::T, x3::T, f3::T) where {T}
@@ -78,6 +88,7 @@ end
     return (xb, fb)
 end
 
+
 @inline function _qls_minimum_high(f0::T, f1::T, f2::T) where {T}
     q1 = f1 + f1
     q2 = q1 + q1
@@ -86,6 +97,7 @@ end
     q5 = q1 - q4
     return (q2 - q3 - q4) / (q5 + q5)
 end
+
 
 @inline function _qls_minimum_low(f0::T, f1::T, f2::T)::T where {T}
     q1 = f2 + f2
@@ -96,6 +108,7 @@ end
     q6 = q5 + q5
     return (q4 + q3 - q2) / (q6 + q6)
 end
+
 
 function quadratic_line_search(f::F, f0::T, x1::T) where {F,T}
     # TODO: In principle, we could make this work for f0 == +Inf.
@@ -137,7 +150,9 @@ function quadratic_line_search(f::F, f0::T, x1::T) where {F,T}
     end
 end
 
+
 ################################################### LINE SEARCH FUNCTION OBJECTS
+
 
 struct LineSearchFunctor{F,T,N}
     objective_functor::F
@@ -145,6 +160,7 @@ struct LineSearchFunctor{F,T,N}
     new_point::Array{T,N}
     step_direction::Array{T,N}
 end
+
 
 struct ConstrainedLineSearchFunctor{F,C,T,N}
     objective_functor::F
@@ -154,6 +170,7 @@ struct ConstrainedLineSearchFunctor{F,C,T,N}
     step_direction::Array{T,N}
 end
 
+
 @inline function (lsf::LineSearchFunctor{F,T,N})(step_size::T) where {F,T,N}
     x0, x1, dx = lsf.initial_point, lsf.new_point, lsf.step_direction
     @simd ivdep for i = 1 : length(x0)
@@ -161,6 +178,7 @@ end
     end
     return lsf.objective_functor(x1)
 end
+
 
 @inline function (clsf::ConstrainedLineSearchFunctor{F,C,T,N})(
         step_size::T) where {F,C,T,N}
@@ -172,22 +190,27 @@ end
     return clsf.objective_functor(x1)
 end
 
+
 ######################################################## REGULARIZATION WRAPPERS
+
 
 struct L2RegularizationWrapper{F,T}
     wrapped_function::F
     lambda::T
 end
 
+
 struct L2GradientWrapper{G,T}
     wrapped_gradient!::G
     lambda::T
 end
 
+
 function (wrapper::L2RegularizationWrapper{F,T})(
         x::AbstractArray{T,N}) where {F,T,N}
     return wrapper.wrapped_function(x) + T(0.5) * wrapper.lambda * norm2(x)
 end
+
 
 function (wrapper::L2GradientWrapper{G,T})(
         g::AbstractArray{T,N}, x::AbstractArray{T,N}) where {G,T,N}
@@ -199,13 +222,16 @@ function (wrapper::L2GradientWrapper{G,T})(
     return g
 end
 
+
 ########################################################################### BFGS
+
 
 @enum StepType begin
     NullStep
     GradientDescentStep
     BFGSStep
 end
+
 
 struct BFGSOptimizer{F,G,T}
     num_dims::Int
@@ -225,6 +251,7 @@ struct BFGSOptimizer{F,G,T}
     _gradient_line_search_functor::LineSearchFunctor{F,T,1}
     _bfgs_line_search_functor::LineSearchFunctor{F,T,1}
 end
+
 
 function BFGSOptimizer(objective_function::F,
                        gradient_function!::G,
@@ -259,6 +286,7 @@ function BFGSOptimizer(objective_function::F,
     )
 end
 
+
 function BFGSOptimizer(::Type{T}, opt::BFGSOptimizer{F,G,U}) where {F,G,T,U}
     current_point = T.(opt.current_point)
     current_objective_value = opt.objective_function(current_point)
@@ -287,6 +315,7 @@ function BFGSOptimizer(::Type{T}, opt::BFGSOptimizer{F,G,U}) where {F,G,T,U}
             current_point, _temp_buffer, next_step_direction)
     )
 end
+
 
 function BFGSOptimizer(objective_function::F1,
                        gradient_function!::G1,
@@ -320,6 +349,7 @@ function BFGSOptimizer(objective_function::F1,
     )
 end
 
+
 function update_inverse_hessian!(
         inv_hess::Matrix{T}, step_size::T, step_direction::Vector{T},
         delta_gradient::Vector{T}, temp_buffer::Vector{T}) where {T}
@@ -338,6 +368,7 @@ function update_inverse_hessian!(
         end
     end
 end
+
 
 function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T}
 
@@ -432,7 +463,9 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T}
     return opt
 end
 
+
 ################################################################## MODEL FITTING
+
 
 function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
 
@@ -523,10 +556,11 @@ function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
 
     end
     return (best_threshold, best_slope, best_mean, best_loss)
-
 end
 
+
 ################################################################################
+
 
 struct ConstrainedGradientDescentOptimizer{S1,S2,S3,T<:Real,N}
     objective_functor::S1
@@ -541,6 +575,7 @@ struct ConstrainedGradientDescentOptimizer{S1,S2,S3,T<:Real,N}
     scratch_space::Array{T,N}
     step_functor::ConstrainedLineSearchFunctor{S1,S3,T,N}
 end
+
 
 function constrained_gradient_descent_optimizer(
         objective_functor::S1, gradient_functor!::S2, constraint_functor!::S3,
@@ -561,6 +596,7 @@ function constrained_gradient_descent_optimizer(
         T[current_objective], current_point, current_gradient,
         delta_point, delta_gradient, scratch_space, step_functor)
 end
+
 
 function step!(opt::ConstrainedGradientDescentOptimizer{S1,S2,S3,T,N}
         ) where {S1,S2,S3,T<:Real,N}
@@ -587,7 +623,9 @@ function step!(opt::ConstrainedGradientDescentOptimizer{S1,S2,S3,T,N}
     return opt
 end
 
+
 ################################################################################
+
 
 struct ConstrainedLBFGSOptimizer{S1,S2,S3,T<:Real,N}
     objective_functor::S1
@@ -608,6 +646,7 @@ struct ConstrainedLBFGSOptimizer{S1,S2,S3,T<:Real,N}
     scratch_space::Array{T,N}
     step_functor::ConstrainedLineSearchFunctor{S1,S3,T,N}
 end
+
 
 function constrained_lbfgs_optimizer(
         objective_functor::S1, gradient_functor!::S2, constraint_functor!::S3,
@@ -633,6 +672,7 @@ function constrained_lbfgs_optimizer(
         Vector{T}(undef, m), Vector{T}(undef, m),
         m, step_direction, scratch_space, step_functor)
 end
+
 
 function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
         ) where {S1,S2,S3,T<:Real,N}
@@ -696,6 +736,5 @@ function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
     return true
 end
 
-################################################################################
 
 end # module DZOptimization
