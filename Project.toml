@@ -1,10 +1,10 @@
 name = "DZOptimization"
 uuid = "7e4c8b08-07ea-4d35-9260-462b5bfff2a0"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
-version = "0.2.1"
+version = "0.3.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [compat]
-julia = "1.0"
+julia = "1"
