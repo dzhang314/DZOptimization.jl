@@ -119,4 +119,71 @@ function riesz_hessian!(
 end
 
 
+function constrain_riesz_gradient_sphere!(
+        grad::AbstractMatrix{T}, points::AbstractMatrix{T}) where {T}
+    dim, num_points = size(points)
+    @inbounds for i = 1 : num_points
+        overlap = zero(T)
+        @simd ivdep for k = 1 : dim
+            overlap += points[k,i] * grad[k,i]
+        end
+        @simd ivdep for k = 1 : dim
+            grad[k,i] -= overlap * points[k,i]
+        end
+    end
+    return grad
+end
+
+
+
+function constrain_riesz_hessian_sphere!(
+        hess::AbstractArray{T,4}, points::AbstractMatrix{T},
+        unconstrained_grad::AbstractMatrix{T}) where {T}
+    dim, num_points = size(points)
+    @inbounds for s = 1 : num_points
+        for t = 1 : num_points
+            for i = 1 : dim
+                temp = zero(T)
+                @simd ivdep for j = 1 : dim
+                    temp += hess[j,s,i,t] * points[j,s]
+                end
+                @simd ivdep for j = 1 : dim
+                    hess[j,s,i,t] -= temp * points[j,s]
+                end
+            end
+        end
+        for t = 1 : num_points
+            for i = 1 : dim
+                temp = zero(T)
+                @simd ivdep for j = 1 : dim
+                    temp += hess[i,t,j,s] * points[j,s]
+                end
+                @simd ivdep for j = 1 : dim
+                    hess[i,t,j,s] -= temp * points[j,s]
+                end
+            end
+        end
+    end
+    @inbounds for s = 1 : num_points
+        for i = 1 : dim
+            gis = unconstrained_grad[i,s]
+            pis = points[i,s]
+            for j = 1 : dim
+                pjs = points[j,s]
+                for k = 1 : dim
+                    pks = points[k,s]
+                    temp = pis * pjs * pks
+                    temp = temp + temp + temp
+                    if j == k; temp -= pis; end
+                    if i == k; temp -= pjs; end
+                    if i == j; temp -= pks; end
+                    hess[k,s,j,s] += gis * temp
+                end
+            end
+        end
+    end
+    return hess
+end
+
+
 end # module ExampleFunctions
