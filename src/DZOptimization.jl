@@ -404,18 +404,13 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T}
         opt.current_objective_value[], step_size / bfgs_norm)
     if isnan(bfgs_obj); bfgs_obj = typemax(T); end
 
-    # We have converged if neither line search reduces the objective function
-    opt.has_converged[] = !(
-        min(bfgs_obj, grad_obj) < opt.current_objective_value[])
-    if opt.has_converged[]; return opt; end
-    opt.iteration_count[] += 1
-
-    if bfgs_obj <= grad_obj
+    if bfgs_obj < opt.current_objective_value[] && bfgs_obj <= grad_obj
 
         # Accept BFGS step
         opt.current_objective_value[] = bfgs_obj
         opt.last_step_size[] = bfgs_step_size * bfgs_norm
         opt.last_step_type[] = BFGSStep
+        opt.iteration_count[] += 1
 
         # Update point, gradient, and delta_gradient
         @simd ivdep for i = 1 : n
@@ -436,12 +431,13 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T}
         # Compute next step direction using approximate inverse Hessian
         mul!(bfgs_dir, opt.approximate_inverse_hessian, grad_dir)
 
-    else
+    elseif grad_obj < opt.current_objective_value[]
 
         # Accept gradient descent step
         opt.current_objective_value[] = grad_obj
         opt.last_step_size[] = grad_step_size * grad_norm
         opt.last_step_type[] = GradientDescentStep
+        opt.iteration_count[] += 1
 
         # Update point and gradient (no need to update delta_gradient,
         # since we'll reset the approximate inverse Hessian)
@@ -457,6 +453,11 @@ function step!(opt::BFGSOptimizer{S1,S2,T}) where {S1, S2, T}
         @simd ivdep for i = 1 : n
             @inbounds bfgs_dir[i] = grad_dir[i]
         end
+
+    else
+
+        # We have converged if neither line search reduces the objective
+        opt.has_converged[] = true
 
     end
 
