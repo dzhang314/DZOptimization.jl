@@ -33,7 +33,7 @@ function run_dzopt_benchmark(Optimizer, name, f, g!,
     final = DZOptimization.run_and_test!(Optimizer(
         f, g!, initial_point, initial_step_size))
 
-    @printf("%s on %s: minimum %.16e in %5d iterations; %8d nanoseconds (%8d bytes; %6d allocs)\n",
+    @printf("%s on %s: min %.16e in %5d iters; %8d ns (%8d bytes; %6d allocs)\n",
             rpad(string(Optimizer), 25), rpad(name, 10),
             final.current_objective_value[],
             final.iteration_count[],
@@ -44,12 +44,14 @@ end
 function run_optim_benchmark(Optimizer, name, f, g!, initial_point)
 
     result = @benchmark optimize($f, $g!, $initial_point,
-                                 method=$Optimizer(), iterations=100_000)
+                                 method=$Optimizer(),
+                                 iterations=typemax(Int), g_tol=0.0)
 
     optimum = optimize(f, g!, initial_point,
-                       method=Optimizer(), iterations=100_000)
+                       method=Optimizer(),
+                       iterations=typemax(Int), g_tol=0.0)
 
-    @printf("%s on %s: minimum %.16e in %5d iterations; %8d nanoseconds (%8d bytes; %6d allocs)\n",
+    @printf("%s on %s: min %.16e in %5d iters; %8d ns (%8d bytes; %6d allocs)\n",
             rpad(string(Optimizer), 25), rpad(name, 10),
             optimum.minimum,
             optimum.iterations,
@@ -61,7 +63,7 @@ end
 function run_comparative_benchmark(DZType, OptimType)
 
     run_dzopt_benchmark(DZType, "rosenbrock",
-        rosenbrock_objective, rosenbrock_gradient!, [0.0, 0.0], 0.01)
+        rosenbrock_objective, rosenbrock_gradient!, [0.0, 0.0], 0.03)
 
     run_optim_benchmark(OptimType, "rosenbrock",
         rosenbrock_objective, rosenbrock_gradient!, [0.0, 0.0])
@@ -72,7 +74,7 @@ function run_comparative_benchmark(DZType, OptimType)
     run_dzopt_benchmark(DZType, "riesz",
         L2RegularizationWrapper(riesz_energy, 1.0),
         L2GradientWrapper(riesz_gradient!, 1.0),
-        points, 0.001)
+        points, 0.01)
 
     run_optim_benchmark(OptimType, "riesz",
         L2RegularizationWrapper(riesz_energy, 1.0),
