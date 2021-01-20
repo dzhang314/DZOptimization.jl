@@ -17,6 +17,12 @@ using LinearAlgebra: mul!
 @inline unsafe_sqrt(x::T) where {T} = sqrt(x)
 
 
+@inline half(::Type{T}) where {T} = one(T) / (one(T) + one(T))
+
+
+@inline NULL_CONSTRAINT(_...) = true
+
+
 @inline function norm2(x::AbstractArray{T,N}) where {T,N}
     result = zero(real(T))
     @simd for i = 1 : length(x)
@@ -77,7 +83,22 @@ end
 end
 
 
-half(::Type{T}) where {T} = one(T) / (one(T) + one(T))
+function negate!(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
+    @simd ivdep for i = 1 : n
+        @inbounds v[i] = -w[i]
+    end
+end
+
+
+function add!(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
+    @simd ivdep for i = 1 : n
+        @inbounds v[i] += w[i]
+    end
+end
+
+
+@inline linear_view(x::Array{T,N}) where {T,N} =
+    reshape(view(x, ntuple(_ -> Colon(), N)...), length(x))
 
 
 ######################################################### LINE SEARCH ALGORITHMS
@@ -210,7 +231,7 @@ function (wrapper::L2GradientWrapper{G,T})(
 end
 
 
-################################################################################
+############################################################### GRADIENT DESCENT
 
 
 struct GradientDescentOptimizer{F,G,C,T,N}
@@ -228,9 +249,6 @@ struct GradientDescentOptimizer{F,G,C,T,N}
     _scratch_space::Array{T,N}
     _line_search_functor::LineSearchFunctor{F,C,T,N}
 end
-
-
-@inline NULL_CONSTRAINT(_...) = true
 
 
 function GradientDescentOptimizer(objective_function::F,
@@ -282,21 +300,8 @@ function GradientDescentOptimizer(objective_function::F,
 end
 
 
-function negate!(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
-    @simd ivdep for i = 1 : n
-        @inbounds v[i] = -w[i]
-    end
-end
-
-
-function add!(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
-    @simd ivdep for i = 1 : n
-        @inbounds v[i] += w[i]
-    end
-end
-
-
 function step!(opt::GradientDescentOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
+
     if !opt.has_converged[]
 
         point = opt.current_point
@@ -338,6 +343,7 @@ function step!(opt::GradientDescentOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
         else
             opt.has_converged[] = true
         end
+
     end
     return opt
 end
@@ -371,6 +377,16 @@ struct BFGSOptimizer{F,G,C,T,N}
     _scratch_space::Array{T,N}
     _gradient_line_search_functor::LineSearchFunctor{F,C,T,N}
     _bfgs_line_search_functor::LineSearchFunctor{F,C,T,N}
+end
+
+
+function BFGSOptimizer(objective_function::F,
+                       gradient_function!::G,
+                       initial_point::Array{T,N},
+                       initial_step_size::T) where {F,G,T,N}
+    return BFGSOptimizer(
+        objective_function, gradient_function!,
+        NULL_CONSTRAINT, initial_point, initial_step_size)
 end
 
 
@@ -436,7 +452,7 @@ function update_inverse_hessian!(
 
     overlap = dot(step_direction, delta_gradient, n)
     step_direction .*= inv(overlap)
-    mul!(view(scratch_space, :), inv_hess, view(delta_gradient, :))
+    mul!(linear_view(scratch_space), inv_hess, linear_view(delta_gradient))
     delta_norm = step_size * overlap + dot(delta_gradient, scratch_space, n)
 
     @inbounds for j = 1 : n
@@ -454,6 +470,7 @@ end
 
 
 function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
+
     if !opt.has_converged[]
 
         point = opt.current_point
@@ -521,9 +538,9 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
                                     delta_gradient, opt._scratch_space)
 
             # Compute next step direction using approximate inverse Hessian.
-            mul!(view(bfgs_direction, :),
+            mul!(linear_view(bfgs_direction),
                  opt.approximate_inverse_hessian,
-                 view(gradient, :))
+                 linear_view(gradient))
 
         elseif grad_obj < opt.current_objective_value[]
 
@@ -556,7 +573,68 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
         else
             opt.has_converged[] = true
         end
+
     end
+    return opt
+end
+
+
+############################################################## OPTIMIZER TESTING
+
+
+function run_and_test!(opt)
+
+    history = [deepcopy(opt)]
+    while !opt.has_converged[]
+        step!(opt)
+        push!(history, deepcopy(opt))
+    end
+
+    # None of the optimizers should have converged, except the last one.
+    for i = 1 : length(history) - 1
+        @assert !history[i].has_converged[]
+    end
+    @assert history[end].has_converged[]
+
+    # Verify consistency of opt.iteration_count.
+    for i = 1 : length(history) - 1
+        @assert history[i].iteration_count[] == i - 1
+    end
+    history[end-1].iteration_count[] == history[end].iteration_count[]
+
+    # Verify consistency of opt.current_objective_value.
+    for opt in history
+        @assert opt.objective_function(opt.current_point) ==
+                opt.current_objective_value[]
+    end
+
+    # Verify consistency of opt.current_gradient.
+    for opt in history
+        grad = similar(opt.current_gradient)
+        opt.gradient_function!(grad, opt.current_point)
+        if grad != opt.current_gradient
+            println("ERROR: ", norm(grad - opt.current_gradient))
+        end
+        @assert grad == opt.current_gradient
+    end
+
+    # Verify consistency of opt.delta_point.
+    for i = 1 : length(history) - 2
+        delta_point = history[i+1].current_point - history[i].current_point
+        @assert delta_point == history[i+1].delta_point
+    end
+    @assert history[end-1].current_point == history[end].current_point
+
+    # Verify consistency of opt.delta_gradient.
+    for i = 1 : length(history) - 2
+        delta_grad = history[i+1].current_gradient - history[i].current_gradient
+        @assert delta_grad == history[i+1].delta_gradient
+    end
+    @assert history[end-1].current_gradient == history[end].current_gradient
+
+    println("Found minimum ", history[end].current_objective_value[],
+            " in ", history[end].iteration_count[], " iterations.")
+
     return opt
 end
 
