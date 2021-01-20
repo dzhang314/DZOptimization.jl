@@ -632,9 +632,6 @@ function run_and_test!(opt)
     end
     @assert history[end-1].current_gradient == history[end].current_gradient
 
-    println("Found minimum ", history[end].current_objective_value[],
-            " in ", history[end].iteration_count[], " iterations.")
-
     return opt
 end
 
