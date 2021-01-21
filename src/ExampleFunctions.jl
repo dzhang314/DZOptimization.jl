@@ -135,7 +135,6 @@ function constrain_riesz_gradient_sphere!(
 end
 
 
-
 function constrain_riesz_hessian_sphere!(
         hess::AbstractArray{T,4}, points::AbstractMatrix{T},
         unconstrained_grad::AbstractMatrix{T}) where {T}
