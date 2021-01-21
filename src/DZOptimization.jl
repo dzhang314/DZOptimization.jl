@@ -4,7 +4,7 @@ module DZOptimization
 #     L2RegularizationWrapper, L2GradientWrapper
 
 export LineSearchFunctor, L2RegularizationWrapper, L2GradientWrapper,
-    step!, GradientDescentOptimizer, BFGSOptimizer
+    step!, GradientDescentOptimizer, BFGSOptimizer, LBFGSOptimizer
 
 using LinearAlgebra: mul!
 
@@ -68,7 +68,17 @@ end
     @simd ivdep for i = 1 : n
         @inbounds result += conj(v[i]) * w[i]
     end
-    result
+    return result
+end
+
+
+@inline function dot(v::AbstractArray{T,N},
+                     w::AbstractMatrix{T}, n::Int, j::Int) where {T,N}
+    result = zero(T)
+    @simd ivdep for i = 1 : n
+        @inbounds result += conj(v[i]) * w[i,j]
+    end
+    return result
 end
 
 
@@ -83,17 +93,47 @@ end
 end
 
 
-function negate!(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
+@inline function negate!(v::AbstractArray{T,N},
+                         w::AbstractArray{T,N}, n::Int) where {T,N}
     @simd ivdep for i = 1 : n
         @inbounds v[i] = -w[i]
     end
+    return v
 end
 
 
-function add!(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
+@inline function add!(v::AbstractArray{T,N},
+                      w::AbstractArray{T,N}, n::Int) where {T,N}
     @simd ivdep for i = 1 : n
         @inbounds v[i] += w[i]
     end
+    return v
+end
+
+
+@inline function add!(v::AbstractArray{T,N}, c::T,
+                      w::AbstractArray{T,N}, n::Int) where {T,N}
+    @simd ivdep for i = 1 : n
+        @inbounds v[i] += c * w[i]
+    end
+    return v
+end
+
+
+@inline function add!(v::AbstractArray{T,N}, c::T,
+                      w::AbstractMatrix{T}, n::Int, j::Int) where {T,N}
+    @simd ivdep for i = 1 : n
+        @inbounds v[i] += c * w[i,j]
+    end
+    return v
+end
+
+
+@inline function scalar_mul!(v::AbstractArray{T,N}, c::T) where {T,N}
+    @simd ivdep for i = 1 : length(v)
+        @inbounds v[i] *= c
+    end
+    return v
 end
 
 
@@ -246,7 +286,6 @@ struct GradientDescentOptimizer{F,G,C,T,N}
     delta_point::Array{T,N}
     delta_gradient::Array{T,N}
     last_step_size::Array{T,0}
-    _scratch_space::Array{T,N}
     _line_search_functor::LineSearchFunctor{F,C,T,N}
 end
 
@@ -295,7 +334,6 @@ function GradientDescentOptimizer(objective_function::F,
         delta_point,
         delta_gradient,
         last_step_size,
-        _scratch_space,
         _line_search_functor)
 end
 
@@ -331,9 +369,7 @@ function step!(opt::GradientDescentOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
             # Update point and gradient.
             negate!(delta_point, point, n)
             negate!(delta_gradient, gradient, n)
-            @simd ivdep for i = 1 : n
-                @inbounds point[i] -= next_step_size * gradient[i]
-            end
+            add!(point, -next_step_size, gradient, n)
             constraint_success = opt.constraint_function!(point)
             @assert constraint_success
             opt.gradient_function!(gradient, point)
@@ -451,7 +487,7 @@ function update_inverse_hessian!(
     @assert (n, n) == size(inv_hess)
 
     overlap = dot(step_direction, delta_gradient, n)
-    step_direction .*= inv(overlap)
+    scalar_mul!(step_direction, inv(overlap))
     mul!(linear_view(scratch_space), inv_hess, linear_view(delta_gradient))
     delta_norm = step_size * overlap + dot(delta_gradient, scratch_space, n)
 
@@ -523,9 +559,7 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
             # Update point and gradient.
             negate!(delta_point, point, n)
             negate!(delta_gradient, gradient, n)
-            @simd ivdep for i = 1 : n
-                @inbounds point[i] -= bfgs_step_size * bfgs_direction[i]
-            end
+            add!(point, -bfgs_step_size, bfgs_direction, n)
             constraint_success = opt.constraint_function!(point)
             @assert constraint_success
             opt.gradient_function!(gradient, point)
@@ -553,9 +587,7 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
             # Update point and gradient.
             negate!(delta_point, point, n)
             negate!(delta_gradient, gradient, n)
-            @simd ivdep for i = 1 : n
-                @inbounds point[i] -= grad_step_size * gradient[i]
-            end
+            add!(point, -grad_step_size, gradient, n)
             constraint_success = opt.constraint_function!(point)
             @assert constraint_success
             opt.gradient_function!(gradient, point)
@@ -568,6 +600,189 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
             # Reset next step direction to gradient.
             @simd ivdep for i = 1 : n
                 @inbounds bfgs_direction[i] = gradient[i]
+            end
+
+        else
+            opt.has_converged[] = true
+        end
+
+    end
+    return opt
+end
+
+
+######################################################################### L-BGFS
+
+
+struct LBFGSOptimizer{F,G,C,T,N}
+    objective_function::F
+    gradient_function!::G
+    constraint_function!::C
+    iteration_count::Array{Int,0}
+    has_converged::Array{Bool,0}
+    current_point::Array{T,N}
+    current_objective_value::Array{T,0}
+    current_gradient::Array{T,N}
+    delta_point::Array{T,N}
+    delta_gradient::Array{T,N}
+    last_step_size::Array{T,0}
+    next_step_direction::Array{T,N}
+    _alpha_history::Vector{T}
+    _rho_history::Vector{T}
+    _delta_point_history::Matrix{T}
+    _delta_gradient_history::Matrix{T}
+    _line_search_functor::LineSearchFunctor{F,C,T,N}
+end
+
+
+function LBFGSOptimizer(objective_function::F,
+                        gradient_function!::G,
+                        initial_point::Array{T,N},
+                        initial_step_size::T,
+                        history_length::Int=10) where {F,G,T,N}
+    return LBFGSOptimizer(
+        objective_function, gradient_function!,
+        NULL_CONSTRAINT, initial_point, initial_step_size, history_length)
+end
+
+
+function LBFGSOptimizer(objective_function::F,
+                        gradient_function!::G,
+                        constraint_function!::C,
+                        initial_point::AbstractArray{T,N},
+                        initial_step_size::T,
+                        history_length::Int=10) where {F,G,C,T,N}
+    @assert history_length > 0
+    iteration_count = fill(0)
+    has_converged = fill(false)
+    current_point = copy(initial_point)
+    constraint_success = constraint_function!(current_point)
+    @assert constraint_success
+    initial_objective_value = objective_function(current_point)
+    @assert !isnan(initial_objective_value)
+    current_objective_value = fill(initial_objective_value)
+    current_gradient = similar(initial_point)
+    gradient_function!(current_gradient, current_point)
+    delta_point = zero(initial_point)
+    delta_gradient = zero(initial_point)
+    last_step_size = fill(initial_step_size)
+    next_step_direction = scalar_mul!(copy(current_gradient),
+        initial_step_size / norm(current_gradient))
+    _alpha_history = zeros(T, history_length)
+    _rho_history = zeros(T, history_length)
+    _delta_point_history = zeros(T, length(initial_point), history_length)
+    _delta_gradient_history = zeros(T, length(initial_point), history_length)
+    _line_search_functor = LineSearchFunctor{F,C,T,N}(
+        objective_function, constraint_function!,
+        current_point, similar(initial_point), next_step_direction)
+    return LBFGSOptimizer{F,G,C,T,N}(
+        objective_function,
+        gradient_function!,
+        constraint_function!,
+        iteration_count,
+        has_converged,
+        current_point,
+        current_objective_value,
+        current_gradient,
+        delta_point,
+        delta_gradient,
+        last_step_size,
+        next_step_direction,
+        _alpha_history,
+        _rho_history,
+        _delta_point_history,
+        _delta_gradient_history,
+        _line_search_functor)
+end
+
+
+function step!(opt::LBFGSOptimizer{S1,S2,S3,T,N}) where {S1,S2,S3,T,N}
+
+    if !opt.has_converged[]
+
+        point = opt.current_point
+        delta_point = opt.delta_point
+        gradient = opt.current_gradient
+        delta_gradient = opt.delta_gradient
+        next_step_direction = opt.next_step_direction
+
+        n = length(point)
+        @assert n == length(delta_point)
+        @assert n == length(gradient)
+        @assert n == length(delta_gradient)
+        @assert n == length(next_step_direction)
+
+        alpha = opt._alpha_history
+        rho = opt._rho_history
+        delta_point_history = opt._delta_point_history
+        delta_gradient_history = opt._delta_gradient_history
+
+        m = length(alpha)
+        @assert m == length(rho)
+        @assert (n, m) == size(delta_point_history)
+        @assert (n, m) == size(delta_gradient_history)
+
+        next_step_size, next_obj = quadratic_line_search(
+            opt._line_search_functor,
+            opt.current_objective_value[],
+            one(T))
+
+        if next_obj < opt.current_objective_value[]
+
+            # Accept L-BFGS step.
+            opt.current_objective_value[] = next_obj
+            opt.last_step_size[] = next_step_size * norm(next_step_direction)
+            opt.iteration_count[] += 1
+
+            # Update point and gradient.
+            negate!(delta_point, point, n)
+            negate!(delta_gradient, gradient, n)
+            add!(point, -next_step_size, next_step_direction, n)
+            constraint_success = opt.constraint_function!(point)
+            @assert constraint_success
+            opt.gradient_function!(gradient, point)
+            add!(delta_point, point, n)
+            add!(delta_gradient, gradient, n)
+    
+            # Store delta_point and delta_gradient in history.
+            c = Base.srem_int(opt.iteration_count[] - 1, m) + 1 # cyclic index
+            @simd ivdep for i = 1 : n
+                @inbounds delta_point_history[i,c] = delta_point[i]
+            end
+            @simd ivdep for i = 1 : n
+                @inbounds delta_gradient_history[i,c] = delta_gradient[i]
+            end
+            delta_overlap = dot(delta_point, delta_gradient, n)
+            @inbounds rho[c] = inv(delta_overlap)
+
+            # Compute next step direction, starting from current gradient.
+            @simd ivdep for i = 1 : n
+                @inbounds next_step_direction[i] = gradient[i]
+            end
+
+            # Apply forward L-BFGS correction.
+            history_count = max(opt.iteration_count[] - m + 1, 1)
+            for iter = opt.iteration_count[] : -1 : history_count;
+                c = Base.srem_int(iter - 1, m) + 1
+                @inbounds overlap = rho[c] * dot(
+                    next_step_direction, delta_point_history, n, c)
+                @inbounds alpha[c] = overlap
+                add!(next_step_direction, overlap, delta_gradient_history, n, c)
+            end
+
+            # Compute natural step size.
+            gamma = delta_overlap / norm2(delta_gradient)
+            if !isfinite(gamma)
+                gamma = sqrt(eps(T)) / max(one(T), norm2(gradient))
+            end
+            scalar_mul!(next_step_direction, gamma)
+
+            # Apply backward L-BFGS correction.
+            for iter = history_count : opt.iteration_count[]
+                c = Base.srem_int(iter - 1, m) + 1
+                @inbounds overlap = alpha[c] - rho[c] * dot(
+                    next_step_direction, delta_gradient_history, n, c)
+                add!(next_step_direction, overlap, delta_point_history, n, c)
             end
 
         else
@@ -731,120 +946,7 @@ function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
 end
 
 
-################################################################################
-
-
-# struct ConstrainedLBFGSOptimizer{S1,S2,S3,T<:Real,N}
-#     objective_functor::S1
-#     gradient_functor!::S2
-#     constraint_functor!::S3
-#     current_iteration::Vector{Int}
-#     current_objective::Vector{T}
-#     current_point::Array{T,N}
-#     current_gradient::Array{T,N}
-#     delta_point::Array{T,N}
-#     delta_gradient::Array{T,N}
-#     delta_point_history::Matrix{T}
-#     delta_gradient_history::Matrix{T}
-#     alpha_history::Vector{T}
-#     rho_history::Vector{T}
-#     history_length::Int
-#     step_direction::Array{T,N}
-#     scratch_space::Array{T,N}
-#     step_functor::ConstrainedLineSearchFunctor{S1,S3,T,N}
-# end
-
-
-# function constrained_lbfgs_optimizer(
-#         objective_functor::S1, gradient_functor!::S2, constraint_functor!::S3,
-#         initial_point::AbstractArray{T,N}, m::Int) where {S1,S2,S3,T<:Real,N}
-#     current_point = copy(initial_point)
-#     constraint_functor!(current_point)
-#     current_objective = objective_functor(current_point)
-#     current_gradient = similar(current_point)
-#     gradient_functor!(current_gradient, current_point)
-#     delta_point = zero(current_point)
-#     delta_gradient = zero(current_gradient)
-#     step_direction = similar(current_point)
-#     scratch_space = similar(current_point)
-#     step_functor = ConstrainedLineSearchFunctor{S1,S3,T,N}(
-#         objective_functor, constraint_functor!,
-#         current_point, scratch_space, step_direction)
-#     return ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}(
-#         objective_functor, gradient_functor!, constraint_functor!, Int[0],
-#         T[current_objective], current_point, current_gradient,
-#         delta_point, delta_gradient,
-#         Matrix{T}(undef, length(current_point), m),
-#         Matrix{T}(undef, length(current_point), m),
-#         Vector{T}(undef, m), Vector{T}(undef, m),
-#         m, step_direction, scratch_space, step_functor)
-# end
-
-
-# function step!(opt::ConstrainedLBFGSOptimizer{S1,S2,S3,T,N}
-#         ) where {S1,S2,S3,T<:Real,N}
-#     @inbounds begin
-
-#         # Define aliases to opt member variables
-#         x, g = opt.current_point, opt.current_gradient
-#         s, y = opt.delta_point, opt.delta_gradient
-#         S, Y = opt.delta_point_history, opt.delta_gradient_history
-#         alpha, rho = opt.alpha_history, opt.rho_history
-#         m, n, temp = opt.history_length, length(x), opt.scratch_space
-#         q, k = opt.step_direction, opt.current_iteration[1] + 1
-#         cur_objective = opt.current_objective[1]
-
-#         # Compute step direction
-#         @simd ivdep for j = 1:n; q[j] = g[j]                      ; end
-#         for i = k-1 : -1 : max(k-m, 1)
-#             c = (i - 1) % m + 1
-#             d = zero(T)
-#             @simd ivdep for j = 1:n; d += S[j,c] * q[j]           ; end
-#             a = alpha[c] = rho[c] * d
-#             @simd ivdep for j = 1:n; q[j] -= a * Y[j,c]           ; end
-#         end
-#         gamma = dot(s, y) / norm2(y)
-#         if !isfinite(gamma)
-#             gamma = sqrt(eps(T)) / max(one(T), norm2(g))
-#         end
-#         @simd ivdep for j = 1:n; q[j] *= gamma                    ; end
-#         for i = max(k-m, 1) : k-1
-#             c = (i - 1) % m + 1
-#             d = zero(T)
-#             @simd ivdep for j = 1:n; d += Y[j,c] * q[j]           ; end
-#             beta = alpha[c] - rho[c] * d
-#             @simd ivdep for j = 1:n; q[j] += S[j,c] * beta        ; end
-#         end
-
-#         # Perform line search
-#         step_size, new_objective = quadratic_line_search(
-#             opt.step_functor, cur_objective, one(T))
-
-#         # Did we improve? If not, return early
-#         if !(new_objective < cur_objective)
-#             return false
-#         end
-
-#         # If we did improve, accept the step
-#         opt.current_iteration[1] = k
-#         opt.current_objective[1] = new_objective
-#         @simd ivdep for j = 1:n; temp[j] = x[j] - step_size * q[j]; end
-#         opt.constraint_functor!(temp)
-#         @simd ivdep for j = 1:n; s[j] = temp[j] - x[j]            ; end
-#         @simd ivdep for j = 1:n; x[j] = temp[j]                   ; end
-#         opt.gradient_functor!(temp, x)
-#         @simd ivdep for j = 1:n; y[j] = temp[j] - g[j]            ; end
-#         @simd ivdep for j = 1:n; g[j] = temp[j]                   ; end
-#         c = (k - 1) % m + 1
-#         @simd ivdep for j = 1:n; S[j,c] = s[j]                    ; end
-#         @simd ivdep for j = 1:n; Y[j,c] = y[j]                    ; end
-#         rho[c] = inv(dot(s, y))
-#     end
-#     return true
-# end
-
-
-################################################################################
+####################################################################### INCLUDES
 
 
 include("./ExampleFunctions.jl")

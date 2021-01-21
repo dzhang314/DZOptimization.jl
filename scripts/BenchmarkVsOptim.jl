@@ -87,6 +87,7 @@ end
 function main()
     run_comparative_benchmark(GradientDescentOptimizer, GradientDescent)
     run_comparative_benchmark(BFGSOptimizer, BFGS)
+    run_comparative_benchmark(LBFGSOptimizer, LBFGS)
 end
 
 
