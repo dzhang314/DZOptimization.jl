@@ -175,7 +175,9 @@ end
 end
 
 
-function quadratic_line_search(f::F, f0::T, x1::T) where {F,T}
+function quadratic_line_search(f::F, f0::T, x1::T,
+                               max_increases::Int=10,
+                               max_decreases::Int=100) where {F,T}
     # TODO: In principle, we could make this work for f0 == +Inf.
     if !isfinite(f0) || !isfinite(x1)
         return zero(T), f0
@@ -186,28 +188,30 @@ function quadratic_line_search(f::F, f0::T, x1::T) where {F,T}
         f1 = f(x1)
     end
     if f1 < f0
+        num_increases = 0
         while true
             x2 = x1 + x1
             f2 = f(x2)
-            if (f2 >= f1) || isnan(f2)
+            num_increases += 1
+            if (f2 >= f1) || isnan(f2) || (num_increases > max_increases)
                 x3 = x1 * _qls_minimum_high(f0, f1, f2)
-                f3 = f(x3)
-                return _qls_best(f0, x1, f1, x2, f2, x3, f3)
+                return _qls_best(f0, x1, f1, x2, f2, x3, f(x3))
             else
                 x1, f1 = x2, f2
             end
         end
     else
+        num_decreases = 0
         while true
             x2 = half(T) * x1
             f2 = f(x2)
+            num_decreases += 1
             if isnan(f2)
                 return (zero(T), f0)
             end
-            if f2 <= f0
+            if (f2 <= f0) || (num_decreases > max_decreases)
                 x3 = x1 * _qls_minimum_low(f0, f1, f2)
-                f3 = f(x3)
-                return _qls_best(f0, x2, f2, x1, f1, x3, f3)
+                return _qls_best(f0, x2, f2, x1, f1, x3, f(x3))
             else
                 x1, f1 = x2, f2
             end
@@ -767,7 +771,8 @@ function step!(opt::LBFGSOptimizer{S1,S2,S3,T,N}) where {S1,S2,S3,T,N}
                 @inbounds overlap = rho[c] * dot(
                     next_step_direction, delta_point_history, n, c)
                 @inbounds alpha[c] = overlap
-                add!(next_step_direction, overlap, delta_gradient_history, n, c)
+                add!(next_step_direction,
+                     overlap, delta_gradient_history, n, c)
             end
 
             # Compute natural step size.
@@ -782,7 +787,8 @@ function step!(opt::LBFGSOptimizer{S1,S2,S3,T,N}) where {S1,S2,S3,T,N}
                 c = Base.srem_int(iter - 1, m) + 1
                 @inbounds overlap = alpha[c] - rho[c] * dot(
                     next_step_direction, delta_gradient_history, n, c)
-                add!(next_step_direction, overlap, delta_point_history, n, c)
+                add!(next_step_direction,
+                     overlap, delta_point_history, n, c)
             end
 
         else
