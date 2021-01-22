@@ -171,9 +171,10 @@ end
 
 
 function add_to_database(dataname)
+    prefix = dataname[1:13]
     datapath = joinpath(PCREO_DIRECTORY, dataname)
     data = read_pcreo_file(datapath)
-    for dirname in readdir(DATABASE_DIRECTORY)
+    for dirname in filter(startswith(prefix), readdir(DATABASE_DIRECTORY))
         dirpath = joinpath(DATABASE_DIRECTORY, dirname)
         @assert isdir(dirpath)
         reppath = joinpath(dirpath, dirname * ".csv")
@@ -209,11 +210,19 @@ function main()
             name = rand(remaining)
             print(length(remaining), '\t', name, " => ")
             flush(stdout)
-            found = add_to_database(name)
-            if occursin(found, name)
-                println("new")
-            else
-                println(found)
+            try
+                found = add_to_database(name)
+                if occursin(found, name)
+                    println("new")
+                else
+                    println(found)
+                end
+            catch e
+                if e isa AssertionError
+                    println("ERROR: ", e)
+                else
+                    rethrow(e)
+                end
             end
             flush(stdout)
         end
