@@ -481,6 +481,59 @@ function BFGSOptimizer(objective_function::F,
 end
 
 
+function BFGSOptimizer(::Type{T},
+                       opt::BFGSOptimizer{F,G,C,U,N}) where {F,G,C,U,T,N}
+    return BFGSOptimizer(T, opt.objective_function, opt.gradient_function!,
+                         opt.constraint_function!, opt)
+end
+
+
+function BFGSOptimizer(::Type{T},
+                       objective_function::F,
+                       gradient_function!::G,
+                       constraint_function!::C,
+                       opt::BFGSOptimizer{F2,G2,C2,T2,N}
+                       ) where {F,G,C,T,F2,G2,C2,T2,N}
+    current_point = T.(opt.current_point)
+    constraint_success = constraint_function!(current_point)
+    @assert constraint_success
+    initial_objective_value = objective_function(current_point)
+    @assert !isnan(initial_objective_value)
+    current_gradient = similar(current_point)
+    gradient_function!(current_gradient, current_point)
+    approximate_inverse_hessian = T.(opt.approximate_inverse_hessian)
+    next_step_direction = similar(current_point)
+    mul!(linear_view(next_step_direction),
+         approximate_inverse_hessian,
+         linear_view(current_gradient))
+    _scratch_space = similar(current_point)
+    _gradient_line_search_functor = LineSearchFunctor{F,C,T,N}(
+        objective_function, constraint_function!,
+        current_point, _scratch_space, current_gradient)
+    _bfgs_line_search_functor = LineSearchFunctor{F,C,T,N}(
+        objective_function, constraint_function!,
+        current_point, _scratch_space, next_step_direction)
+    return BFGSOptimizer{F,G,C,T,N}(
+        objective_function,
+        gradient_function!,
+        constraint_function!,
+        fill(opt.iteration_count[]),
+        fill(false),
+        current_point,
+        fill(initial_objective_value),
+        current_gradient,
+        T.(opt.delta_point),
+        T.(opt.delta_gradient),
+        fill(opt.last_step_size[]),
+        fill(opt.last_step_type[]),
+        approximate_inverse_hessian,
+        next_step_direction,
+        _scratch_space,
+        _gradient_line_search_functor,
+        _bfgs_line_search_functor)
+end
+
+
 function update_inverse_hessian!(
         inv_hess::Matrix{T}, step_size::T, step_direction::Array{T,N},
         delta_gradient::Array{T,N}, scratch_space::Array{T,N}) where {T,N}
