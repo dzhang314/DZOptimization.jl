@@ -185,6 +185,9 @@ function quadratic_line_search(f::F, f0::T, x1::T,
     f1 = f(x1)
     while isnan(f1)
         x1 = half(T) * x1
+        if iszero(x1)
+            return zero(T), f0
+        end
         f1 = f(x1)
     end
     if f1 < f0
@@ -800,7 +803,7 @@ function step!(opt::LBFGSOptimizer{S1,S2,S3,T,N}) where {S1,S2,S3,T,N}
             opt.gradient_function!(gradient, point)
             add!(delta_point, point, n)
             add!(delta_gradient, gradient, n)
-    
+
             # Store delta_point and delta_gradient in history.
             c = Base.srem_int(opt.iteration_count[] - 1, m) + 1 # cyclic index
             @simd ivdep for i = 1 : n
