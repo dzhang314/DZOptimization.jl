@@ -701,8 +701,8 @@ function LBFGSOptimizer(objective_function::F,
                         initial_step_size::T,
                         history_length::Int=10) where {F,G,T,N}
     return LBFGSOptimizer(
-        objective_function, gradient_function!,
-        NULL_CONSTRAINT, initial_point, initial_step_size, history_length)
+        objective_function, gradient_function!, NULL_CONSTRAINT,
+        initial_point, initial_step_size, history_length)
 end
 
 
