@@ -1,8 +1,5 @@
 module DZOptimization
 
-# export LineSearchFunctor, BFGSOptimizer, step!, find_saturation_threshold,
-#     L2RegularizationWrapper, L2GradientWrapper
-
 export LineSearchFunctor, L2RegularizationWrapper, L2GradientWrapper,
     step!, GradientDescentOptimizer, BFGSOptimizer, LBFGSOptimizer
 
