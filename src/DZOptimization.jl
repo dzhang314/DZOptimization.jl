@@ -78,7 +78,7 @@ struct GradientDescentOptimizer{C,F,G,L,T,N}
 
     line_search_function!::L
     next_step_direction::Array{T,N}
-    last_step_size::Array{T,0}
+    last_step_length::Array{T,0}
 
     iteration_count::Array{Int,0}
     has_converged::Array{Bool,0}
@@ -92,7 +92,7 @@ function GradientDescentOptimizer(
     gradient_function!::G,
     line_search_function!::L,
     initial_point::AbstractArray{T,N},
-    initial_step_size::T,
+    initial_step_length::T,
 ) where {C,F,G,L,T,N}
 
     current_point = collect(initial_point)
@@ -108,9 +108,9 @@ function GradientDescentOptimizer(
     gradient_function!(current_gradient, current_point)
     delta_gradient = zero(current_point)
 
-    last_step_size = fill(initial_step_size)
+    last_step_length = fill(initial_step_length)
     next_step_direction = scale!(copy(current_gradient),
-        initial_step_size * inv_norm(current_gradient))
+        initial_step_length * inv_norm(current_gradient))
 
     iteration_count = fill(0)
     has_converged = fill(false)
@@ -119,7 +119,7 @@ function GradientDescentOptimizer(
         constraint_function!, current_point, delta_point,
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
-        line_search_function!, next_step_direction, last_step_size,
+        line_search_function!, next_step_direction, last_step_length,
         iteration_count, has_converged)
 end
 
@@ -135,24 +135,24 @@ function step!(opt::GradientDescentOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
     if !opt.has_converged[]
 
         #=
-        step_size = opt.last_step_size[]
+        step_length = opt.last_step_length[]
         gradient_norm = norm(opt.current_gradient)
-        next_step_size, next_obj = quadratic_line_search(
+        next_step_length, next_obj = quadratic_line_search(
             opt._line_search_functor,
             opt.current_objective_value[],
-            step_size / gradient_norm)
+            step_length / gradient_norm)
 
         if next_obj < opt.current_objective_value[]
 
             # Accept gradient descent step.
             opt.current_objective_value[] = next_obj
-            opt.last_step_size[] = next_step_size * gradient_norm
+            opt.last_step_length[] = next_step_length * gradient_norm
             opt.iteration_count[] += 1
 
             # Update point and gradient.
             negate!(opt.delta_point, opt.current_point, n)
             negate!(opt.delta_gradient, opt.current_gradient, n)
-            add!(opt.current_point, -next_step_size, opt.current_gradient, n)
+            add!(opt.current_point, -next_step_length, opt.current_gradient, n)
             constraint_success = opt.constraint_function!(opt.current_point)
             @assert constraint_success
             opt.gradient_function!(opt.current_gradient, opt.current_point)
@@ -188,7 +188,7 @@ struct LBFGSOptimizer{C,F,G,L,T,N}
 
     line_search_function!::L
     next_step_direction::Array{T,N}
-    last_step_size::Array{T,0}
+    last_step_length::Array{T,0}
 
     iteration_count::Array{Int,0}
     has_converged::Array{Bool,0}
@@ -207,7 +207,7 @@ function LBFGSOptimizer(
     gradient_function!::G,
     line_search_function!::L,
     initial_point::AbstractArray{T,N},
-    initial_step_size::T,
+    initial_step_length::T,
     history_length::Int,
 ) where {C,F,G,L,T,N}
 
@@ -224,9 +224,9 @@ function LBFGSOptimizer(
     gradient_function!(current_gradient, current_point)
     delta_gradient = zero(current_point)
 
-    last_step_size = fill(initial_step_size)
+    last_step_length = fill(initial_step_length)
     next_step_direction = scale!(copy(current_gradient),
-        initial_step_size * inv_norm(current_gradient))
+        initial_step_length * inv_norm(current_gradient))
 
     iteration_count = fill(0)
     has_converged = fill(false)
@@ -241,7 +241,7 @@ function LBFGSOptimizer(
         constraint_function!, current_point, delta_point,
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
-        line_search_function!, next_step_direction, last_step_size,
+        line_search_function!, next_step_direction, last_step_length,
         iteration_count, has_converged,
         _alpha_history, _rho_history,
         _delta_point_history, _delta_gradient_history)
@@ -272,7 +272,7 @@ end
 
 #=
 
-        next_step_size, next_obj = quadratic_line_search(
+        next_step_length, next_obj = quadratic_line_search(
             opt._line_search_functor,
             opt.current_objective_value[],
             one(T))
@@ -281,13 +281,13 @@ end
 
             # Accept L-BFGS step.
             opt.current_objective_value[] = next_obj
-            opt.last_step_size[] = next_step_size * norm(next_step_direction)
+            opt.last_step_length[] = next_step_length * norm(next_step_direction)
             opt.iteration_count[] += 1
 
             # Update point and gradient.
             negate!(delta_point, point, n)
             negate!(delta_gradient, gradient, n)
-            add!(point, -next_step_size, next_step_direction, n)
+            add!(point, -next_step_length, next_step_direction, n)
             constraint_success = opt.constraint_function!(point)
             @assert constraint_success
             opt.gradient_function!(gradient, point)
@@ -516,10 +516,10 @@ struct LineSearchFunctor{F,C,T,N}
 end
 
 @inline function (lsf::LineSearchFunctor{F,C,T,N})(
-                  step_size::T) where {F,C,T,N}
+                  step_length::T) where {F,C,T,N}
     x0, x1, dx = lsf.current_point, lsf.new_point, lsf.step_direction
     @simd ivdep for i = 1 : length(x0)
-        @inbounds x1[i] = x0[i] - step_size * dx[i]
+        @inbounds x1[i] = x0[i] - step_length * dx[i]
     end
     lsf.constraint_function!(x1) && return lsf.objective_function(x1)
     return typemax(T)
@@ -571,7 +571,7 @@ struct BFGSOptimizer{F,G,C,T,N}
     current_gradient::Array{T,N}
     delta_point::Array{T,N}
     delta_gradient::Array{T,N}
-    last_step_size::Array{T,0}
+    last_step_length::Array{T,0}
     last_step_type::Array{StepType,0}
     approximate_inverse_hessian::Matrix{T}
     next_step_direction::Array{T,N}
@@ -583,17 +583,17 @@ end
 function BFGSOptimizer(objective_function::F,
                        gradient_function!::G,
                        initial_point::Array{T,N},
-                       initial_step_size::T) where {F,G,T,N}
+                       initial_step_length::T) where {F,G,T,N}
     return BFGSOptimizer(
         objective_function, gradient_function!,
-        NULL_CONSTRAINT, initial_point, initial_step_size)
+        NULL_CONSTRAINT, initial_point, initial_step_length)
 end
 
 function BFGSOptimizer(objective_function::F,
                        gradient_function!::G,
                        constraint_function!::C,
                        initial_point::Array{T,N},
-                       initial_step_size::T) where {F,G,C,T,N}
+                       initial_step_length::T) where {F,G,C,T,N}
     iteration_count = fill(0)
     has_converged = fill(false)
     current_point = copy(initial_point)
@@ -606,7 +606,7 @@ function BFGSOptimizer(objective_function::F,
     gradient_function!(current_gradient, current_point)
     delta_point = zero(initial_point)
     delta_gradient = zero(initial_point)
-    last_step_size = fill(initial_step_size)
+    last_step_length = fill(initial_step_length)
     last_step_type = fill(NullStep)
     approximate_inverse_hessian = Matrix{T}(undef,
         length(initial_point), length(initial_point))
@@ -630,7 +630,7 @@ function BFGSOptimizer(objective_function::F,
         current_gradient,
         delta_point,
         delta_gradient,
-        last_step_size,
+        last_step_length,
         last_step_type,
         approximate_inverse_hessian,
         next_step_direction,
@@ -682,7 +682,7 @@ function BFGSOptimizer(::Type{T},
         current_gradient,
         T.(opt.delta_point),
         T.(opt.delta_gradient),
-        fill(opt.last_step_size[]),
+        fill(opt.last_step_length[]),
         fill(opt.last_step_type[]),
         approximate_inverse_hessian,
         next_step_direction,
@@ -692,7 +692,7 @@ function BFGSOptimizer(::Type{T},
 end
 
 function update_inverse_hessian!(
-        inv_hess::Matrix{T}, step_size::T, step_direction::Array{T,N},
+        inv_hess::Matrix{T}, step_length::T, step_direction::Array{T,N},
         delta_gradient::Array{T,N}, scratch_space::Array{T,N}) where {T,N}
 
     n = length(step_direction)
@@ -703,7 +703,7 @@ function update_inverse_hessian!(
     overlap = dot(step_direction, delta_gradient, n)
     scalar_mul!(step_direction, inv(overlap))
     mul!(linear_view(scratch_space), inv_hess, linear_view(delta_gradient))
-    delta_norm = step_size * overlap + dot(delta_gradient, scratch_space, n)
+    delta_norm = step_length * overlap + dot(delta_gradient, scratch_space, n)
 
     @inbounds for j = 1 : n
         sj = step_direction[j]
@@ -745,34 +745,34 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
         # the Hessian when necessary.
 
         # Use the previous step size as the initial guess for line search.
-        step_size = opt.last_step_size[]
+        step_length = opt.last_step_length[]
 
         # Launch line search in raw (-gradient) direction.
         grad_norm = norm(gradient)
-        grad_step_size, grad_obj = quadratic_line_search(
+        grad_step_length, grad_obj = quadratic_line_search(
             opt._gradient_line_search_functor,
             opt.current_objective_value[],
-            step_size / grad_norm)
+            step_length / grad_norm)
 
         # Launch line search in BFGS (Hessian)^-1 * (-gradient) direction.
         bfgs_norm = norm(bfgs_direction)
-        bfgs_step_size, bfgs_obj = quadratic_line_search(
+        bfgs_step_length, bfgs_obj = quadratic_line_search(
             opt._bfgs_line_search_functor,
             opt.current_objective_value[],
-            step_size / bfgs_norm)
+            step_length / bfgs_norm)
 
         if bfgs_obj < opt.current_objective_value[] && !(bfgs_obj > grad_obj)
 
             # Accept BFGS step.
             opt.current_objective_value[] = bfgs_obj
-            opt.last_step_size[] = bfgs_step_size * bfgs_norm
+            opt.last_step_length[] = bfgs_step_length * bfgs_norm
             opt.last_step_type[] = BFGSStep
             opt.iteration_count[] += 1
 
             # Update point and gradient.
             negate!(delta_point, point, n)
             negate!(delta_gradient, gradient, n)
-            add!(point, -bfgs_step_size, bfgs_direction, n)
+            add!(point, -bfgs_step_length, bfgs_direction, n)
             constraint_success = opt.constraint_function!(point)
             @assert constraint_success
             opt.gradient_function!(gradient, point)
@@ -781,7 +781,7 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
 
             # Update inverse Hessian approximation using delta_gradient.
             update_inverse_hessian!(opt.approximate_inverse_hessian,
-                                    -bfgs_step_size, bfgs_direction,
+                                    -bfgs_step_length, bfgs_direction,
                                     delta_gradient, opt._scratch_space)
 
             # Compute next step direction using approximate inverse Hessian.
@@ -793,14 +793,14 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
 
             # Accept gradient descent step.
             opt.current_objective_value[] = grad_obj
-            opt.last_step_size[] = grad_step_size * grad_norm
+            opt.last_step_length[] = grad_step_length * grad_norm
             opt.last_step_type[] = GradientDescentStep
             opt.iteration_count[] += 1
 
             # Update point and gradient.
             negate!(delta_point, point, n)
             negate!(delta_gradient, gradient, n)
-            add!(point, -grad_step_size, gradient, n)
+            add!(point, -grad_step_length, gradient, n)
             constraint_success = opt.constraint_function!(point)
             @assert constraint_success
             opt.gradient_function!(gradient, point)
