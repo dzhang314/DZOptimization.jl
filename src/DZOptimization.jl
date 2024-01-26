@@ -81,6 +81,7 @@ struct LineSearchEvaluator{C,F,T,N}
     constraint_function!::C
     current_point::Array{T,N}
     new_point::Array{T,N}
+    reference_point::Array{T,N}
 
     objective_function::F
     step_direction::Array{T,N}
@@ -103,10 +104,103 @@ end
 ################################################################################
 
 
-export BacktrackingLineSearch, QuadraticLineSearch, CubicLineSearch
+export QuadraticLineSearch
 
 
-struct BacktrackingLineSearch
+function find_three_point_bracket(
+    lse::LineSearchEvaluator{C,F,T,N}, f0::T, max_increases::Int
+) where {C,F,T,N}
+
+    n = length(lse.current_point)
+    @assert n == length(lse.new_point)
+    @assert n == length(lse.step_direction)
+
+    _zero = zero(T)
+    _one = one(T)
+
+    if !isfinite(f0)
+        return (_zero, f0, _zero, f0)
+    end
+
+    step_size = _one
+    made_change = false
+    @simd for i = 1:n
+        old = lse.current_point[i]
+        new = old + lse.step_direction[i]
+        if old != new
+            made_change = true
+        end
+        lse.new_point[i] = new
+    end
+
+    has_increased = false
+    while !made_change
+        step_size += step_size
+        has_increased = true
+        made_change = false
+        @simd for i = 1:n
+            old = lse.current_point[i]
+            new = old + step_size * lse.step_direction[i]
+            if old != new
+                made_change = true
+            end
+            lse.new_point[i] = new
+        end
+    end
+
+    is_feasible = lse.constraint_function!(lse.new_point)
+    if has_increased
+        if !is_feasible
+            return (_zero, f0, _zero, f0)
+        end
+        made_change = false
+        @simd for i = 1:n
+            if lse.current_point[i] != lse.new_point[i]
+                made_change = true
+            end
+        end
+        if !made_change
+            return (_zero, f0, _zero, f0)
+        end
+    end
+
+    f1 = is_feasible ? lse.objective_function(lse.new_point) : typemax(T)
+    if f1 <= f0
+        copy!(lse.reference_point, lse.new_point)
+        num_increases = 0
+        while true
+            double_step_size = step_size + step_size
+            num_increases += 1
+            f2 = lse(double_step_size)
+            hit_max = (max_increases > 0) && (num_increases >= max_increases)
+            if hit_max || (!isfinite(f2)) || (f2 > f1)
+                return (step_size, f1, double_step_size, f2)
+            end
+            made_change = false
+            @simd for i = 1:n
+                if lse.new_point[i] != lse.reference_point[i]
+                    made_change = true
+                end
+            end
+            if !made_change
+                return (step_size, f1, double_step_size, f2)
+            end
+            step_size = double_step_size
+            f1 = f2
+            copy!(lse.reference_point, lse.new_point)
+        end
+    else
+        half = inv(step_size + step_size)
+        while true
+            half_step_size = half * step_size
+            f2 = lse(half_step_size)
+            if f2 <= f0
+                return (half_step_size, f2, step_size, f1)
+            end
+            step_size = half_step_size
+            f1 = f2
+        end
+    end
 end
 
 
@@ -117,47 +211,6 @@ end
 
 function QuadraticLineSearch()
     return QuadraticLineSearch(0)
-end
-
-
-struct CubicLineSearch
-    max_increases::Int
-end
-
-
-function find_three_point_bracket(f::F, f0::T, max_increases::Int) where {F,T}
-    if !isfinite(f0)
-        return (zero(T), f0, zero(T), f0)
-    end
-    step_size = one(T)
-    f1 = f(step_size)
-    if f1 <= f0
-        num_increases = 0
-        while true
-            double_step_size = step_size + step_size
-            num_increases += 1
-            f2 = f(double_step_size)
-            hit_max = (max_increases > 0) && (num_increases >= max_increases)
-            if hit_max || (!isfinite(f2)) || (f2 > f1)
-                return (step_size, f1, double_step_size, f2)
-            end
-            step_size = double_step_size
-            f1 = f2
-        end
-    else
-        # TODO: Detect when step size has become so small
-        # that the current point is no longer changing.
-        half = inv(step_size + step_size)
-        while true
-            half_step_size = half * step_size
-            f2 = f(half_step_size)
-            if f2 <= f0
-                return (half_step_size, f2, step_size, f1)
-            end
-            step_size = half_step_size
-            f1 = f2
-        end
-    end
 end
 
 
@@ -246,7 +299,8 @@ function GradientDescentOptimizer(
     next_step_direction = scale!(copy(current_gradient),
         -initial_step_length * inv_norm(current_gradient))
     line_search_evaluator = LineSearchEvaluator{C,F,T,N}(
-        constraint_function!, current_point, similar(current_point),
+        constraint_function!, current_point,
+        similar(current_point), similar(current_point),
         objective_function, next_step_direction)
 
     iteration_count = fill(0)
@@ -318,6 +372,13 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         end
 
         # Compute new step direction.
+        if iszero(gradient_norm)
+            opt.has_terminated[] = true
+            @simd ivdep for i = 1:n
+                opt.next_step_direction[i] = gradient_norm
+            end
+            return opt
+        end
         step_scale = -step_length * rsqrt(gradient_norm)
         @simd ivdep for i = 1:n
             opt.next_step_direction[i] = step_scale * opt.current_gradient[i]
@@ -391,7 +452,8 @@ function LBFGSOptimizer(
     next_step_direction = scale!(copy(current_gradient),
         initial_step_length * inv_norm(current_gradient))
     line_search_evaluator = LineSearchEvaluator{C,F,T,N}(
-        constraint_function!, current_point, similar(current_point),
+        constraint_function!, current_point,
+        similar(current_point), similar(current_point),
         objective_function, next_step_direction)
 
     iteration_count = fill(0)
@@ -1039,5 +1101,45 @@ function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
 end
 
 =#
+
+
+################################################################################
+
+
+@inline random_advance(state::UInt64) =
+    0x5851F42D4C957F2D * state + 0x14057B7EF767814F
+
+
+@inline random_extract(state::UInt64) = bitrotate(
+    (xor(state >> 18, state) >> 27) % UInt32, -(state >> 59))
+
+
+@inline function random_fill!(
+    x::AbstractArray{T,D}, seed::I
+) where {T,D,I<:Integer}
+    state = random_advance(0x14057B7EF767814F + (seed % UInt64))
+    @simd for i in eachindex(x)
+        x[i] = 2.3283064365386962890625E-10 * random_extract(state)
+        state = random_advance(state)
+    end
+    return x
+end
+
+
+function random_array(
+    seed::I, ::Type{T}, dims::NTuple{D,Int}
+) where {T,D,I<:Integer}
+    result = Array{T,D}(undef, dims)
+    random_fill!(result, seed % UInt64)
+    return result
+end
+
+
+@inline random_array(seed::I, ::Type{T}, dims::Int...) where {T,I<:Integer} =
+    random_array(seed, T, dims)
+
+
+################################################################################
+
 
 end # module DZOptimization
