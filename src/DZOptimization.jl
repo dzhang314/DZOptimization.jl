@@ -1,7 +1,8 @@
 module DZOptimization
 
 
-using MultiFloats: MultiFloat, MultiFloatVec, rsqrt
+using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
+using SIMD: Vec
 
 
 ################################################################################
@@ -38,6 +39,9 @@ function norm2_mfv(x::Array{MultiFloat{T,N},D}, ::Val{M}) where {M,T,N,D}
 end
 
 
+# TODO: How do we allow the user to specify the vector length?
+# For now, we default to vectors of length 8, since these are fastest on all
+# platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
 @inline norm2(x::Array{MultiFloat{T,N},D}) where {T,N,D} =
     norm2_mfv(x, Val{8}())
 
@@ -53,6 +57,20 @@ function scale!(x::AbstractArray{T,D}, alpha::T) where {T,D}
 end
 
 
+function axpy!(
+    dst::AbstractArray{T,D},
+    alpha::T,
+    x::AbstractArray{T,D},
+    y::AbstractArray{T,D},
+) where {T,D}
+    @assert size(dst) == size(x) == size(y) # TODO: REMOVE
+    @simd ivdep for i in eachindex(dst)
+        @inbounds dst[i] = alpha * x[i] + y[i]
+    end
+    return dst
+end
+
+
 ################################################################################
 
 
@@ -60,6 +78,67 @@ end
 
 
 ################################################################################
+
+
+struct LineSearchEvaluator{C,F,T,N}
+
+    constraint_function!::C
+    current_point::Array{T,N}
+    new_point::Array{T,N}
+
+    objective_function::F
+    step_direction::Array{T,N}
+
+end
+
+
+function (lse::LineSearchEvaluator{C,F,T,N})(step_size::T) where {C,F,T,N}
+    axpy!(lse.new_point, step_size, lse.step_direction, lse.current_point)
+    if !lse.constraint_function!(lse.new_point)
+        return typemax(T)
+    end
+    return lse.objective_function(lse.new_point)
+end
+
+
+################################################################################
+
+
+function find_three_point_bracket(f::F, f0::T) where {F,T}
+    step_size = one(T)
+    f1 = f(step_size)
+    if f1 <= f0
+        while true
+            double_step_size = step_size + step_size
+            f2 = f(double_step_size)
+            if (f2 > f1) || !isfinite(f2)
+                return (step_size, f1, double_step_size, f2)
+            end
+            step_size = double_step_size
+            f1 = f2
+        end
+    else
+        half = inv(step_size + step_size)
+        while true
+            half_step_size = half * step_size
+            f2 = f(half_step_size)
+            if (f2 <= f0) || !isfinite(f2)
+                return (half_step_size, f2, step_size, f1)
+            end
+            step_size = half_step_size
+            f1 = f2
+        end
+    end
+end
+
+
+# TODO: special case for MultiFloat that uses scale(step_size)
+
+
+################################################################################
+
+
+export GradientDescentOptimizer, step!
 
 
 struct GradientDescentOptimizer{C,F,G,L,T,N}
@@ -79,6 +158,7 @@ struct GradientDescentOptimizer{C,F,G,L,T,N}
     line_search_function!::L
     next_step_direction::Array{T,N}
     last_step_length::Array{T,0}
+    line_search_evaluator::LineSearchEvaluator{C,F,T,N}
 
     iteration_count::Array{Int,0}
     has_converged::Array{Bool,0}
@@ -110,7 +190,10 @@ function GradientDescentOptimizer(
 
     last_step_length = fill(initial_step_length)
     next_step_direction = scale!(copy(current_gradient),
-        initial_step_length * inv_norm(current_gradient))
+        -initial_step_length * inv_norm(current_gradient))
+    line_search_evaluator = LineSearchEvaluator{C,F,T,N}(
+        constraint_function!, current_point, similar(current_point),
+        objective_function, next_step_direction)
 
     iteration_count = fill(0)
     has_converged = fill(false)
@@ -120,7 +203,7 @@ function GradientDescentOptimizer(
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
         line_search_function!, next_step_direction, last_step_length,
-        iteration_count, has_converged)
+        line_search_evaluator, iteration_count, has_converged)
 end
 
 
@@ -172,6 +255,9 @@ end
 ################################################################################
 
 
+export LBFGSOptimizer, step!
+
+
 struct LBFGSOptimizer{C,F,G,L,T,N}
 
     constraint_function!::C
@@ -189,6 +275,7 @@ struct LBFGSOptimizer{C,F,G,L,T,N}
     line_search_function!::L
     next_step_direction::Array{T,N}
     last_step_length::Array{T,0}
+    line_search_evaluator::LineSearchEvaluator{C,F,T,N}
 
     iteration_count::Array{Int,0}
     has_converged::Array{Bool,0}
@@ -227,6 +314,9 @@ function LBFGSOptimizer(
     last_step_length = fill(initial_step_length)
     next_step_direction = scale!(copy(current_gradient),
         initial_step_length * inv_norm(current_gradient))
+    line_search_evaluator = LineSearchEvaluator{C,F,T,N}(
+        constraint_function!, current_point, similar(current_point),
+        objective_function, next_step_direction)
 
     iteration_count = fill(0)
     has_converged = fill(false)
@@ -242,7 +332,7 @@ function LBFGSOptimizer(
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
         line_search_function!, next_step_direction, last_step_length,
-        iteration_count, has_converged,
+        line_search_evaluator, iteration_count, has_converged,
         _alpha_history, _rho_history,
         _delta_point_history, _delta_gradient_history)
 end
@@ -262,8 +352,6 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
     @assert (n, m) == size(opt._delta_gradient_history)
 
     if !opt.has_converged[]
-
-
 
     end
     return opt
@@ -503,26 +591,6 @@ function quadratic_line_search(f::F, f0::T, x1::T,
             end
         end
     end
-end
-
-############################################################ LINE SEARCH FUNCTOR
-
-struct LineSearchFunctor{F,C,T,N}
-    objective_function::F
-    constraint_function!::C
-    current_point::Array{T,N}
-    new_point::Array{T,N}
-    step_direction::Array{T,N}
-end
-
-@inline function (lsf::LineSearchFunctor{F,C,T,N})(
-                  step_length::T) where {F,C,T,N}
-    x0, x1, dx = lsf.current_point, lsf.new_point, lsf.step_direction
-    @simd ivdep for i = 1 : length(x0)
-        @inbounds x1[i] = x0[i] - step_length * dx[i]
-    end
-    lsf.constraint_function!(x1) && return lsf.objective_function(x1)
-    return typemax(T)
 end
 
 ######################################################## REGULARIZATION WRAPPERS
