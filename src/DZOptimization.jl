@@ -287,7 +287,6 @@ function GradientDescentOptimizer(
     delta_point = zero(current_point)
 
     initial_objective_value = objective_function(current_point)
-    @assert isfinite(initial_objective_value)
     current_objective_value = fill(initial_objective_value)
     delta_objective_value = zeros(T)
 
@@ -295,16 +294,22 @@ function GradientDescentOptimizer(
     gradient_function!(current_gradient, current_point)
     delta_gradient = zero(current_point)
 
-    last_step_length = fill(initial_step_length)
-    next_step_direction = scale!(copy(current_gradient),
-        -initial_step_length * inv_norm(current_gradient))
+    last_step_length = fill(zero(T))
+    inv_gradient_norm = inv_norm(current_gradient)
+    next_step_direction = zero(current_point)
+    if isfinite(inv_gradient_norm)
+        copy!(next_step_direction, current_gradient)
+        scale!(next_step_direction, -initial_step_length * inv_gradient_norm)
+    end
     line_search_evaluator = LineSearchEvaluator{C,F,T,N}(
         constraint_function!, current_point,
         similar(current_point), similar(current_point),
         objective_function, next_step_direction)
 
     iteration_count = fill(0)
-    has_terminated = fill(false)
+    has_terminated = fill(
+        (!isfinite(initial_objective_value)) ||
+        (!isfinite(inv_gradient_norm)))
 
     return GradientDescentOptimizer{C,F,G,L,T,N}(
         constraint_function!, current_point, delta_point,
@@ -324,6 +329,8 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
     @assert n == length(opt.next_step_direction)
 
     if !opt.has_terminated[]
+
+        _zero = zero(T)
 
         # Perform line search.
         step_size, objective_value = opt.line_search_function!(
@@ -347,7 +354,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         @assert opt.constraint_function!(opt.current_point)
 
         # Compute delta point and step length.
-        step_length = zero(T)
+        step_length = _zero
         @simd for i = 1:n
             delta = opt.current_point[i] - opt.delta_point[i]
             opt.delta_point[i] = delta
@@ -364,7 +371,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Compute new gradient and delta.
         copy!(opt.delta_gradient, opt.current_gradient)
         opt.gradient_function!(opt.current_gradient, opt.current_point)
-        gradient_norm = zero(T)
+        gradient_norm = _zero
         @simd ivdep for i = 1:n
             grad = opt.current_gradient[i]
             gradient_norm += grad * grad
@@ -372,10 +379,10 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         end
 
         # Compute new step direction.
-        if iszero(gradient_norm)
+        if iszero(gradient_norm) || !isfinite(gradient_norm)
             opt.has_terminated[] = true
             @simd ivdep for i = 1:n
-                opt.next_step_direction[i] = gradient_norm
+                opt.next_step_direction[i] = _zero
             end
             return opt
         end
