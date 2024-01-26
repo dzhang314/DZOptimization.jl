@@ -58,13 +58,9 @@ end
 
 
 function axpy!(
-    dst::AbstractArray{T,D},
-    alpha::T,
-    x::AbstractArray{T,D},
-    y::AbstractArray{T,D},
+    dst::Array{T,D}, alpha::T, x::Array{T,D}, y::Array{T,D}, n::Int
 ) where {T,D}
-    @assert size(dst) == size(x) == size(y) # TODO: REMOVE
-    @simd ivdep for i in eachindex(dst)
+    @simd ivdep for i = 1:n
         @inbounds dst[i] = alpha * x[i] + y[i]
     end
     return dst
@@ -93,7 +89,10 @@ end
 
 
 function (lse::LineSearchEvaluator{C,F,T,N})(step_size::T) where {C,F,T,N}
-    axpy!(lse.new_point, step_size, lse.step_direction, lse.current_point)
+    n = length(lse.current_point)
+    @assert n == length(lse.new_point)
+    @assert n == length(lse.step_direction)
+    axpy!(lse.new_point, step_size, lse.step_direction, lse.current_point, n)
     if !lse.constraint_function!(lse.new_point)
         return typemax(T)
     end
@@ -104,25 +103,55 @@ end
 ################################################################################
 
 
-function find_three_point_bracket(f::F, f0::T) where {F,T}
+export BacktrackingLineSearch, QuadraticLineSearch, CubicLineSearch
+
+
+struct BacktrackingLineSearch
+end
+
+
+struct QuadraticLineSearch
+    max_increases::Int
+end
+
+
+function QuadraticLineSearch()
+    return QuadraticLineSearch(0)
+end
+
+
+struct CubicLineSearch
+    max_increases::Int
+end
+
+
+function find_three_point_bracket(f::F, f0::T, max_increases::Int) where {F,T}
+    if !isfinite(f0)
+        return (zero(T), f0, zero(T), f0)
+    end
     step_size = one(T)
     f1 = f(step_size)
     if f1 <= f0
+        num_increases = 0
         while true
             double_step_size = step_size + step_size
+            num_increases += 1
             f2 = f(double_step_size)
-            if (f2 > f1) || !isfinite(f2)
+            hit_max = (max_increases > 0) && (num_increases >= max_increases)
+            if hit_max || (!isfinite(f2)) || (f2 > f1)
                 return (step_size, f1, double_step_size, f2)
             end
             step_size = double_step_size
             f1 = f2
         end
     else
+        # TODO: Detect when step size has become so small
+        # that the current point is no longer changing.
         half = inv(step_size + step_size)
         while true
             half_step_size = half * step_size
             f2 = f(half_step_size)
-            if (f2 <= f0) || !isfinite(f2)
+            if f2 <= f0
                 return (half_step_size, f2, step_size, f1)
             end
             step_size = half_step_size
@@ -132,7 +161,32 @@ function find_three_point_bracket(f::F, f0::T) where {F,T}
 end
 
 
-# TODO: special case for MultiFloat that uses scale(step_size)
+function (qls::QuadraticLineSearch)(
+    lse::LineSearchEvaluator{C,F,T,N}, f0::T, _::Array{T,N}
+) where {C,F,T,N}
+    _zero = zero(T)
+    (x1, f1, x2, f2) = find_three_point_bracket(lse, f0, qls.max_increases)
+    xb, fb = _zero, f0
+    if f1 < fb
+        xb, fb = x1, f1
+    end
+    if f2 < fb
+        xb, fb = x2, f2
+    end
+    delta_1 = f0 - f1
+    delta_2 = f2 - f1
+    sum_deltas = delta_1 + delta_2
+    if (delta_1 >= _zero) && (delta_2 >= _zero) && (sum_deltas > _zero)
+        twice_delta_1 = delta_1 + delta_1
+        delta_ratio = (twice_delta_1 + sum_deltas) / (sum_deltas + sum_deltas)
+        xq = delta_ratio * x1
+        fq = lse(xq)
+        if fq < fb
+            xb, fb = xq, fq
+        end
+    end
+    return (xb, fb)
+end
 
 
 ################################################################################
@@ -161,7 +215,7 @@ struct GradientDescentOptimizer{C,F,G,L,T,N}
     line_search_evaluator::LineSearchEvaluator{C,F,T,N}
 
     iteration_count::Array{Int,0}
-    has_converged::Array{Bool,0}
+    has_terminated::Array{Bool,0}
 
 end
 
@@ -196,18 +250,18 @@ function GradientDescentOptimizer(
         objective_function, next_step_direction)
 
     iteration_count = fill(0)
-    has_converged = fill(false)
+    has_terminated = fill(false)
 
     return GradientDescentOptimizer{C,F,G,L,T,N}(
         constraint_function!, current_point, delta_point,
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
         line_search_function!, next_step_direction, last_step_length,
-        line_search_evaluator, iteration_count, has_converged)
+        line_search_evaluator, iteration_count, has_terminated)
 end
 
 
-function step!(opt::GradientDescentOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
+function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
     n = length(opt.current_point)
     @assert n == length(opt.delta_point)
@@ -215,37 +269,59 @@ function step!(opt::GradientDescentOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
     @assert n == length(opt.delta_gradient)
     @assert n == length(opt.next_step_direction)
 
-    if !opt.has_converged[]
+    if !opt.has_terminated[]
 
-        #=
-        step_length = opt.last_step_length[]
-        gradient_norm = norm(opt.current_gradient)
-        next_step_length, next_obj = quadratic_line_search(
-            opt._line_search_functor,
-            opt.current_objective_value[],
-            step_length / gradient_norm)
+        # Perform line search.
+        step_size, objective_value = opt.line_search_function!(
+            opt.line_search_evaluator,
+            opt.current_objective_value[], opt.current_gradient)
 
-        if next_obj < opt.current_objective_value[]
-
-            # Accept gradient descent step.
-            opt.current_objective_value[] = next_obj
-            opt.last_step_length[] = next_step_length * gradient_norm
-            opt.iteration_count[] += 1
-
-            # Update point and gradient.
-            negate!(opt.delta_point, opt.current_point, n)
-            negate!(opt.delta_gradient, opt.current_gradient, n)
-            add!(opt.current_point, -next_step_length, opt.current_gradient, n)
-            constraint_success = opt.constraint_function!(opt.current_point)
-            @assert constraint_success
-            opt.gradient_function!(opt.current_gradient, opt.current_point)
-            add!(opt.delta_point, opt.current_point, n)
-            add!(opt.delta_gradient, opt.current_gradient, n)
-
+        # Check for improvement. If no improvement has occured, terminate.
+        has_improved = (objective_value < opt.current_objective_value[])
+        if iszero(step_size) || !has_improved
+            opt.has_terminated[] = true
+            return opt
         else
-            opt.has_converged[] = true
+            opt.iteration_count[] += 1
         end
-        =#
+
+        # Update the current point and apply constraints.
+        copy!(opt.delta_point, opt.current_point)
+        @simd ivdep for i = 1:n
+            opt.current_point[i] += step_size * opt.next_step_direction[i]
+        end
+        @assert opt.constraint_function!(opt.current_point)
+
+        # Compute delta point and step length.
+        step_length = zero(T)
+        @simd for i = 1:n
+            delta = opt.current_point[i] - opt.delta_point[i]
+            opt.delta_point[i] = delta
+            step_length += delta * delta
+        end
+        step_length = sqrt(step_length)
+        opt.last_step_length[] = step_length
+
+        # Update objective value and delta.
+        opt.delta_objective_value[] =
+            objective_value - opt.current_objective_value[]
+        opt.current_objective_value[] = objective_value
+
+        # Compute new gradient and delta.
+        copy!(opt.delta_gradient, opt.current_gradient)
+        opt.gradient_function!(opt.current_gradient, opt.current_point)
+        gradient_norm = zero(T)
+        @simd ivdep for i = 1:n
+            grad = opt.current_gradient[i]
+            gradient_norm += grad * grad
+            opt.delta_gradient[i] = grad - opt.delta_gradient[i]
+        end
+
+        # Compute new step direction.
+        step_scale = -step_length * rsqrt(gradient_norm)
+        @simd ivdep for i = 1:n
+            opt.next_step_direction[i] = step_scale * opt.current_gradient[i]
+        end
 
     end
     return opt
@@ -278,7 +354,7 @@ struct LBFGSOptimizer{C,F,G,L,T,N}
     line_search_evaluator::LineSearchEvaluator{C,F,T,N}
 
     iteration_count::Array{Int,0}
-    has_converged::Array{Bool,0}
+    has_terminated::Array{Bool,0}
 
     _alpha_history::Vector{T}
     _rho_history::Vector{T}
@@ -319,7 +395,7 @@ function LBFGSOptimizer(
         objective_function, next_step_direction)
 
     iteration_count = fill(0)
-    has_converged = fill(false)
+    has_terminated = fill(false)
 
     @assert history_length > 0
     _alpha_history = zeros(T, history_length)
@@ -332,7 +408,7 @@ function LBFGSOptimizer(
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
         line_search_function!, next_step_direction, last_step_length,
-        line_search_evaluator, iteration_count, has_converged,
+        line_search_evaluator, iteration_count, has_terminated,
         _alpha_history, _rho_history,
         _delta_point_history, _delta_gradient_history)
 end
@@ -351,7 +427,7 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
     @assert (n, m) == size(opt._delta_point_history)
     @assert (n, m) == size(opt._delta_gradient_history)
 
-    if !opt.has_converged[]
+    if !opt.has_terminated[]
 
     end
     return opt
@@ -426,7 +502,7 @@ end
             end
 
         else
-            opt.has_converged[] = true
+            opt.has_terminated[] = true
         end
 
 export LineSearchFunctor, L2RegularizationWrapper, L2GradientWrapper,
@@ -556,7 +632,7 @@ struct BFGSOptimizer{F,G,C,T,N}
     gradient_function!::G
     constraint_function!::C
     iteration_count::Array{Int,0}
-    has_converged::Array{Bool,0}
+    has_terminated::Array{Bool,0}
     current_point::Array{T,N}
     current_objective_value::Array{T,0}
     current_gradient::Array{T,N}
@@ -586,7 +662,7 @@ function BFGSOptimizer(objective_function::F,
                        initial_point::Array{T,N},
                        initial_step_length::T) where {F,G,C,T,N}
     iteration_count = fill(0)
-    has_converged = fill(false)
+    has_terminated = fill(false)
     current_point = copy(initial_point)
     constraint_success = constraint_function!(current_point)
     @assert constraint_success
@@ -615,7 +691,7 @@ function BFGSOptimizer(objective_function::F,
         gradient_function!,
         constraint_function!,
         iteration_count,
-        has_converged,
+        has_terminated,
         current_point,
         current_objective_value,
         current_gradient,
@@ -711,7 +787,7 @@ end
 
 function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
 
-    if !opt.has_converged[]
+    if !opt.has_terminated[]
 
         point = opt.current_point
         delta_point = opt.delta_point
@@ -807,7 +883,7 @@ function step!(opt::BFGSOptimizer{F,G,C,T,N}) where {F,G,C,T,N}
             end
 
         else
-            opt.has_converged[] = true
+            opt.has_terminated[] = true
         end
 
     end
@@ -819,16 +895,16 @@ end
 function run_and_test!(opt)
 
     history = [deepcopy(opt)]
-    while !opt.has_converged[]
+    while !opt.has_terminated[]
         step!(opt)
         push!(history, deepcopy(opt))
     end
 
     # None of the optimizers should have converged, except the last one.
     for i = 1 : length(history) - 1
-        @assert !history[i].has_converged[]
+        @assert !history[i].has_terminated[]
     end
-    @assert history[end].has_converged[]
+    @assert history[end].has_terminated[]
 
     # Verify consistency of opt.iteration_count.
     for i = 1 : length(history) - 1
