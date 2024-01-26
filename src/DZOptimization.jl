@@ -5,7 +5,7 @@ using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
 using SIMD: Vec
 
 
-################################################################################
+######################################################### LINEAR ALGEBRA KERNELS
 
 
 @inline _iota(::Val{M}) where {M} = Vec{M,Int}(ntuple(i -> i - 1, Val{M}()))
@@ -67,19 +67,16 @@ function axpy!(
 end
 
 
-################################################################################
+######################################################### OPTIMIZATION UTILITIES
 
 
 @inline NULL_CONSTRAINT(_...) = true
 
 
-################################################################################
-
-
 struct LineSearchEvaluator{C,F,T,N}
 
     constraint_function!::C
-    current_point::Array{T,N}
+    initial_point::Array{T,N}
     new_point::Array{T,N}
     reference_point::Array{T,N}
 
@@ -90,10 +87,10 @@ end
 
 
 function (lse::LineSearchEvaluator{C,F,T,N})(step_size::T) where {C,F,T,N}
-    n = length(lse.current_point)
+    n = length(lse.initial_point)
     @assert n == length(lse.new_point)
     @assert n == length(lse.step_direction)
-    axpy!(lse.new_point, step_size, lse.step_direction, lse.current_point, n)
+    axpy!(lse.new_point, step_size, lse.step_direction, lse.initial_point, n)
     if !lse.constraint_function!(lse.new_point)
         return typemax(T)
     end
@@ -101,88 +98,105 @@ function (lse::LineSearchEvaluator{C,F,T,N})(step_size::T) where {C,F,T,N}
 end
 
 
-################################################################################
-
-
-export QuadraticLineSearch
-
-
 function find_three_point_bracket(
     lse::LineSearchEvaluator{C,F,T,N}, f0::T, max_increases::Int
 ) where {C,F,T,N}
 
-    n = length(lse.current_point)
+    # Validate array sizes.
+    n = length(lse.initial_point)
     @assert n == length(lse.new_point)
+    @assert n == length(lse.reference_point)
     @assert n == length(lse.step_direction)
 
+    # Construct constants.
     _zero = zero(T)
     _one = one(T)
 
+    # Exit early if initial objective value is non-finite.
     if !isfinite(f0)
         return (_zero, f0, _zero, f0)
     end
 
-    step_size = _one
-    made_change = false
+    # In some cases, the step vector can be so small (on the order of rounding
+    # error) that adding it to the initial point has no effect. We detect this
+    # condition by comparing the coordinates of the initial and new points.
+    step_is_zero = true
+    point_changed = false
     @simd for i = 1:n
-        old = lse.current_point[i]
-        new = old + lse.step_direction[i]
-        if old != new
-            made_change = true
-        end
+        step = lse.step_direction[i]
+        step_is_zero &= iszero(step)
+        initial = lse.initial_point[i]
+        new = initial + step
+        point_changed |= (initial != new)
         lse.new_point[i] = new
     end
 
-    has_increased = false
-    while !made_change
+    # Exit early if step vector is zero.
+    if step_is_zero
+        return (_zero, f0, _zero, f0)
+    end
+
+    # If the step vector is nonzero but too small to have an effect,
+    # then we repeatedly double the step size until it is large enough.
+    step_size = _one
+    step_is_small = false
+    while !point_changed
         step_size += step_size
-        has_increased = true
-        made_change = false
+        step_is_small = true
+        point_changed = false
         @simd for i = 1:n
-            old = lse.current_point[i]
-            new = old + step_size * lse.step_direction[i]
-            if old != new
-                made_change = true
-            end
+            initial = lse.initial_point[i]
+            new = initial + step_size * lse.step_direction[i]
+            point_changed |= (initial != new)
             lse.new_point[i] = new
         end
     end
 
+    # Apply constraint function to check feasibility of new point.
     is_feasible = lse.constraint_function!(lse.new_point)
-    if has_increased
+
+    # Exit early if initial point is on the boundary of the feasible region.
+    if step_is_small
+
+        # If the new point is infeasible even after taking the smallest
+        # possible step, then the initial point must have been on the boundary.
         if !is_feasible
             return (_zero, f0, _zero, f0)
         end
-        made_change = false
-        @simd for i = 1:n
-            if lse.current_point[i] != lse.new_point[i]
-                made_change = true
-            end
-        end
-        if !made_change
+
+        # If the new point is identical to the initial point after
+        # applying constraints, then it must have been on the boundary.
+        if lse.initial_point == lse.new_point
             return (_zero, f0, _zero, f0)
         end
+
     end
 
+    # Evaluate objective function at new point.
     f1 = is_feasible ? lse.objective_function(lse.new_point) : typemax(T)
+
+    # If the new point is better than the initial point, then we repeatedly
+    # take larger steps until we find a worse or infeasible point.
     if f1 <= f0
+
+        # In some cases, repeatedly taking larger steps may cause us to get
+        # stuck at the boundary of the feasible region. To detect this
+        # condition, we keep track of the last two feasible points and
+        # terminate the search if they coincide.
         copy!(lse.reference_point, lse.new_point)
+
+        # A user may optionally specify a maximum number of times to increase
+        # (double) the step size to prevent the search from straying too far.
         num_increases = 0
+
         while true
             double_step_size = step_size + step_size
             num_increases += 1
             f2 = lse(double_step_size)
-            hit_max = (max_increases > 0) && (num_increases >= max_increases)
-            if hit_max || (!isfinite(f2)) || (f2 > f1)
-                return (step_size, f1, double_step_size, f2)
-            end
-            made_change = false
-            @simd for i = 1:n
-                if lse.new_point[i] != lse.reference_point[i]
-                    made_change = true
-                end
-            end
-            if !made_change
+            if (((max_increases > 0) && (num_increases >= max_increases)) ||
+                (!isfinite(f2)) ||
+                (f2 > f1) ||
+                (lse.new_point == lse.reference_point))
                 return (step_size, f1, double_step_size, f2)
             end
             step_size = double_step_size
@@ -190,6 +204,9 @@ function find_three_point_bracket(
             copy!(lse.reference_point, lse.new_point)
         end
     else
+
+        # If the new point is worse than the initial point, then we repeatedly
+        # take smaller steps until we find a better feasible point.
         half = inv(step_size + step_size)
         while true
             half_step_size = half * step_size
@@ -202,6 +219,12 @@ function find_three_point_bracket(
         end
     end
 end
+
+
+########################################################## QUADRATIC LINE SEARCH
+
+
+export QuadraticLineSearch
 
 
 struct QuadraticLineSearch
@@ -242,7 +265,7 @@ function (qls::QuadraticLineSearch)(
 end
 
 
-################################################################################
+############################################################### GRADIENT DESCENT
 
 
 export GradientDescentOptimizer, step!
@@ -320,6 +343,22 @@ function GradientDescentOptimizer(
 end
 
 
+GradientDescentOptimizer(
+    objective_function::F,
+    gradient_function!::G,
+    line_search_function!::L,
+    initial_point::AbstractArray{T,N},
+    initial_step_length::T,
+) where {F,G,L,T,N} = GradientDescentOptimizer(
+    NULL_CONSTRAINT,
+    objective_function,
+    gradient_function!,
+    line_search_function!,
+    initial_point,
+    initial_step_length,
+)
+
+
 function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
     n = length(opt.current_point)
@@ -371,22 +410,22 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Compute new gradient and delta.
         copy!(opt.delta_gradient, opt.current_gradient)
         opt.gradient_function!(opt.current_gradient, opt.current_point)
-        gradient_norm = _zero
+        gradient_norm_squared = _zero
         @simd ivdep for i = 1:n
             grad = opt.current_gradient[i]
-            gradient_norm += grad * grad
+            gradient_norm_squared += grad * grad
             opt.delta_gradient[i] = grad - opt.delta_gradient[i]
         end
 
         # Compute new step direction.
-        if iszero(gradient_norm) || !isfinite(gradient_norm)
+        if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
             opt.has_terminated[] = true
             @simd ivdep for i = 1:n
                 opt.next_step_direction[i] = _zero
             end
             return opt
         end
-        step_scale = -step_length * rsqrt(gradient_norm)
+        step_scale = -step_length * rsqrt(gradient_norm_squared)
         @simd ivdep for i = 1:n
             opt.next_step_direction[i] = step_scale * opt.current_gradient[i]
         end
@@ -396,7 +435,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 end
 
 
-################################################################################
+######################################################################### L-BFGS
 
 
 export LBFGSOptimizer, step!
@@ -617,45 +656,6 @@ end
         end
     end
     return A
-end
-
-@inline function negate!(v::AbstractArray{T,N},
-                         w::AbstractArray{T,N}, n::Int) where {T,N}
-    @simd ivdep for i = 1 : n
-        @inbounds v[i] = -w[i]
-    end
-    return v
-end
-
-@inline function add!(v::AbstractArray{T,N},
-                      w::AbstractArray{T,N}, n::Int) where {T,N}
-    @simd ivdep for i = 1 : n
-        @inbounds v[i] += w[i]
-    end
-    return v
-end
-
-@inline function add!(v::AbstractArray{T,N}, c::T,
-                      w::AbstractArray{T,N}, n::Int) where {T,N}
-    @simd ivdep for i = 1 : n
-        @inbounds v[i] += c * w[i]
-    end
-    return v
-end
-
-@inline function add!(v::AbstractArray{T,N}, c::T,
-                      w::AbstractMatrix{T}, n::Int, j::Int) where {T,N}
-    @simd ivdep for i = 1 : n
-        @inbounds v[i] += c * w[i,j]
-    end
-    return v
-end
-
-@inline function scalar_mul!(v::AbstractArray{T,N}, c::T) where {T,N}
-    @simd ivdep for i = 1 : length(v)
-        @inbounds v[i] *= c
-    end
-    return v
 end
 
 @inline linear_view(x::Array{T,N}) where {T,N} =
@@ -1110,7 +1110,7 @@ end
 =#
 
 
-################################################################################
+############################################################################ PCG
 
 
 @inline random_advance(state::UInt64) =
@@ -1144,9 +1144,6 @@ end
 
 @inline random_array(seed::I, ::Type{T}, dims::Int...) where {T,I<:Integer} =
     random_array(seed, T, dims)
-
-
-################################################################################
 
 
 end # module DZOptimization
