@@ -558,6 +558,24 @@ function LBFGSOptimizer(
 end
 
 
+LBFGSOptimizer(
+    objective_function::F,
+    gradient_function!::G,
+    line_search_function!::L,
+    initial_point::AbstractArray{T,N},
+    initial_step_length::T,
+    history_length::Int,
+) where {F,G,L,T,N} = LBFGSOptimizer(
+    NULL_CONSTRAINT,
+    objective_function,
+    gradient_function!,
+    line_search_function!,
+    initial_point,
+    initial_step_length,
+    history_length,
+)
+
+
 function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
     # Validate array sizes.
