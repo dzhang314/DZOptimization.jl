@@ -1,6 +1,7 @@
 module ExampleFunctions
 
 using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
+using SIMD: Vec
 
 ##################################################################### ROSENBROCK
 
@@ -186,12 +187,16 @@ function riesz_energy_2d_mfv(
     return result_scalar + sum(result_vector)
 end
 
+@inline riesz_energy_2d_mfv(points::Matrix{MultiFloat{T,N}}) where {T,N} =
+    riesz_energy_2d_mfv(points, Val{8}())
+
 function riesz_gradient_2d_mfv!(
     gradient::Matrix{MultiFloat{T,N}},
     points::Matrix{MultiFloat{T,N}},
     ::Val{M}
 ) where {M,T,N}
     dimension, num_points = size(points)
+    @assert (dimension, num_points) == size(gradient)
     @assert dimension == 2
     ptr = pointer(points)
     iota_x = 2 * (_iota(Val{M}()) - 1)
@@ -261,6 +266,10 @@ function riesz_gradient_2d_mfv!(
     return gradient
 end
 
+@inline riesz_gradient_2d_mfv!(
+    gradient::Matrix{MultiFloat{T,N}}, points::Matrix{MultiFloat{T,N}}
+) where {T,N} = riesz_gradient_2d_mfv!(gradient, points, Val{8}())
+
 function riesz_gradient_2d_mfv(
     points::Matrix{MultiFloat{T,N}},
     ::Val{M}
@@ -269,6 +278,9 @@ function riesz_gradient_2d_mfv(
     riesz_gradient_2d_mfv!(result, points, Val{M}())
     return result
 end
+
+@inline riesz_gradient_2d_mfv(points::Matrix{MultiFloat{T,N}}) where {T,N} =
+    riesz_gradient_2d_mfv(points, Val{8}())
 
 ############################################################# FINITE DIFFERENCES
 
