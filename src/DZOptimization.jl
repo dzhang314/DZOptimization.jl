@@ -293,6 +293,49 @@ function (qls::QuadraticLineSearch)(
 end
 
 
+################################################################ BOX CONSTRAINTS
+
+
+export UnitBoxConstraint, UnitBoxGradientWrapper
+
+
+struct UnitBoxConstraint
+end
+
+
+function (::UnitBoxConstraint)(x::AbstractArray{T,D}) where {T,D}
+    _zero = zero(T)
+    _one = one(T)
+    @simd ivdep for i in eachindex(x)
+        x[i] = clamp(x[i], _zero, _one)
+    end
+    return true
+end
+
+
+struct UnitBoxGradientWrapper{G}
+    gradient_function!::G
+end
+
+
+function (wrapper::UnitBoxGradientWrapper{G})(
+    g::Array{T,N}, x::Array{T,N}
+) where {G,T,N}
+    n = length(g)
+    @assert n == length(x)
+    wrapper.gradient_function!(g, x)
+    _zero = zero(T)
+    _one = one(T)
+    @simd ivdep for i = 1:n
+        if (((x[i] <= _zero) && (g[i] >= _zero)) ||
+            ((x[i] >= _one) && (g[i] <= _zero)))
+            g[i] = _zero
+        end
+    end
+    return g
+end
+
+
 ############################################################### GRADIENT DESCENT
 
 
@@ -450,9 +493,6 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # If gradient is zero or non-finite, terminate.
         if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
             opt.has_terminated[] = true
-            @simd ivdep for i = 1:n
-                opt.next_step_direction[i] = _zero
-            end
             return opt
         end
 
@@ -599,14 +639,26 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             opt.line_search_evaluator,
             opt.current_objective_value[], opt.current_gradient)
 
-        # If line search yielded no improvement, terminate.
+        # If line search yielded no improvement, ...
         if (iszero(step_size) ||
             !(objective_value < opt.current_objective_value[]))
-            opt.has_terminated[] = true
-            return opt
-        else
-            opt.iteration_count[] += 1
+
+            # ... try again using uncorrected gradient as step direction.
+            copy!(opt.next_step_direction, opt.current_gradient)
+            scale!(opt.next_step_direction,
+                -opt.last_step_length[] * inv_norm(opt.current_gradient))
+            step_size, objective_value = opt.line_search_function!(
+                opt.line_search_evaluator,
+                opt.current_objective_value[], opt.current_gradient)
+
+            # If line search still yields no improvement, terminate.
+            if (iszero(step_size) ||
+                !(objective_value < opt.current_objective_value[]))
+                opt.has_terminated[] = true
+                return opt
+            end
         end
+        opt.iteration_count[] += 1
 
         # Update current point and apply constraints.
         copy!(opt.delta_point, opt.current_point)
@@ -646,9 +698,6 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # If gradient is zero or non-finite, terminate.
         if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
             opt.has_terminated[] = true
-            @simd ivdep for i = 1:n
-                opt.next_step_direction[i] = _zero
-            end
             return opt
         end
 
@@ -699,9 +748,6 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # If not, reset step direction to negative gradient.
         if !isfinite(overlap)
             opt.has_terminated[] = true
-            @simd ivdep for i = 1:n
-                opt.next_step_direction[i] = _zero
-            end
         elseif overlap <= _zero
             copy!(opt.next_step_direction, opt.current_gradient)
             scale!(opt.next_step_direction,
@@ -713,11 +759,6 @@ end
 
 
 #=
-
-
-        else
-            opt.has_terminated[] = true
-        end
 
 ########################################################## UNSAFE LINEAR ALGEBRA
 
