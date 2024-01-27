@@ -361,6 +361,7 @@ GradientDescentOptimizer(
 
 function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
+    # Validate array sizes.
     n = length(opt.current_point)
     @assert n == length(opt.delta_point)
     @assert n == length(opt.current_gradient)
@@ -369,6 +370,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
     if !opt.has_terminated[]
 
+        # Construct constants.
         _zero = zero(T)
 
         # Perform line search.
@@ -376,16 +378,16 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             opt.line_search_evaluator,
             opt.current_objective_value[], opt.current_gradient)
 
-        # Check for improvement. If no improvement has occured, terminate.
-        has_improved = (objective_value < opt.current_objective_value[])
-        if iszero(step_size) || !has_improved
+        # If line search yielded no improvement, terminate.
+        if (iszero(step_size) ||
+            !(objective_value < opt.current_objective_value[]))
             opt.has_terminated[] = true
             return opt
         else
             opt.iteration_count[] += 1
         end
 
-        # Update the current point and apply constraints.
+        # Update current point and apply constraints.
         copy!(opt.delta_point, opt.current_point)
         @simd ivdep for i = 1:n
             opt.current_point[i] += step_size * opt.next_step_direction[i]
@@ -407,7 +409,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             objective_value - opt.current_objective_value[]
         opt.current_objective_value[] = objective_value
 
-        # Compute new gradient and delta.
+        # Update gradient and delta.
         copy!(opt.delta_gradient, opt.current_gradient)
         opt.gradient_function!(opt.current_gradient, opt.current_point)
         gradient_norm_squared = _zero
@@ -417,7 +419,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             opt.delta_gradient[i] = grad - opt.delta_gradient[i]
         end
 
-        # Compute new step direction.
+        # If gradient is zero or non-finite, terminate.
         if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
             opt.has_terminated[] = true
             @simd ivdep for i = 1:n
@@ -425,6 +427,8 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             end
             return opt
         end
+
+        # Compute next step direction.
         step_scale = -step_length * rsqrt(gradient_norm_squared)
         @simd ivdep for i = 1:n
             opt.next_step_direction[i] = step_scale * opt.current_gradient[i]
@@ -486,7 +490,6 @@ function LBFGSOptimizer(
     delta_point = zero(current_point)
 
     initial_objective_value = objective_function(current_point)
-    @assert isfinite(initial_objective_value)
     current_objective_value = fill(initial_objective_value)
     delta_objective_value = zeros(T)
 
@@ -494,16 +497,22 @@ function LBFGSOptimizer(
     gradient_function!(current_gradient, current_point)
     delta_gradient = zero(current_point)
 
-    last_step_length = fill(initial_step_length)
-    next_step_direction = scale!(copy(current_gradient),
-        initial_step_length * inv_norm(current_gradient))
+    last_step_length = fill(zero(T))
+    inv_gradient_norm = inv_norm(current_gradient)
+    next_step_direction = zero(current_point)
+    if isfinite(inv_gradient_norm)
+        copy!(next_step_direction, current_gradient)
+        scale!(next_step_direction, -initial_step_length * inv_gradient_norm)
+    end
     line_search_evaluator = LineSearchEvaluator{C,F,T,N}(
         constraint_function!, current_point,
         similar(current_point), similar(current_point),
         objective_function, next_step_direction)
 
     iteration_count = fill(0)
-    has_terminated = fill(false)
+    has_terminated = fill(
+        (!isfinite(initial_objective_value)) ||
+        (!isfinite(inv_gradient_norm)))
 
     @assert history_length > 0
     _alpha_history = zeros(T, history_length)
@@ -524,12 +533,12 @@ end
 
 function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
+    # Validate array sizes.
     n = length(opt.current_point)
     @assert n == length(opt.delta_point)
     @assert n == length(opt.current_gradient)
     @assert n == length(opt.delta_gradient)
     @assert n == length(opt.next_step_direction)
-
     m = length(opt._alpha_history)
     @assert m == length(opt._rho_history)
     @assert (n, m) == size(opt._delta_point_history)
@@ -537,34 +546,73 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
     if !opt.has_terminated[]
 
+        # Construct constants.
+        _zero = zero(T)
+
+        # Perform line search.
+        step_size, objective_value = opt.line_search_function!(
+            opt.line_search_evaluator,
+            opt.current_objective_value[], opt.current_gradient)
+
+        # If line search yielded no improvement, terminate.
+        if (iszero(step_size) ||
+            !(objective_value < opt.current_objective_value[]))
+            opt.has_terminated[] = true
+            return opt
+        else
+            opt.iteration_count[] += 1
+        end
+
+        # Update current point and apply constraints.
+        copy!(opt.delta_point, opt.current_point)
+        @simd ivdep for i = 1:n
+            opt.current_point[i] += step_size * opt.next_step_direction[i]
+        end
+        @assert opt.constraint_function!(opt.current_point)
+
+        # Compute delta point and step length.
+        step_length = _zero
+        @simd for i = 1:n
+            delta = opt.current_point[i] - opt.delta_point[i]
+            opt.delta_point[i] = delta
+            step_length += delta * delta
+        end
+        step_length = sqrt(step_length)
+        opt.last_step_length[] = step_length
+
+        # Update objective value and delta.
+        opt.delta_objective_value[] =
+            objective_value - opt.current_objective_value[]
+        opt.current_objective_value[] = objective_value
+
+        # Update gradient and delta.
+        copy!(opt.delta_gradient, opt.current_gradient)
+        opt.gradient_function!(opt.current_gradient, opt.current_point)
+        gradient_norm_squared = _zero
+        @simd ivdep for i = 1:n
+            grad = opt.current_gradient[i]
+            gradient_norm_squared += grad * grad
+            opt.delta_gradient[i] = grad - opt.delta_gradient[i]
+        end
+
+        # If gradient is zero or non-finite, terminate.
+        if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
+            opt.has_terminated[] = true
+            @simd ivdep for i = 1:n
+                opt.next_step_direction[i] = _zero
+            end
+            return opt
+        end
+
+        # Compute next step direction.
+        # TODO
+
     end
     return opt
 end
 
 
 #=
-
-        next_step_length, next_obj = quadratic_line_search(
-            opt._line_search_functor,
-            opt.current_objective_value[],
-            one(T))
-
-        if next_obj < opt.current_objective_value[]
-
-            # Accept L-BFGS step.
-            opt.current_objective_value[] = next_obj
-            opt.last_step_length[] = next_step_length * norm(next_step_direction)
-            opt.iteration_count[] += 1
-
-            # Update point and gradient.
-            negate!(delta_point, point, n)
-            negate!(delta_gradient, gradient, n)
-            add!(point, -next_step_length, next_step_direction, n)
-            constraint_success = opt.constraint_function!(point)
-            @assert constraint_success
-            opt.gradient_function!(gradient, point)
-            add!(delta_point, point, n)
-            add!(delta_gradient, gradient, n)
 
             # Store delta_point and delta_gradient in history.
             c = Base.srem_int(opt.iteration_count[] - 1, m) + 1 # cyclic index
@@ -612,11 +660,6 @@ end
         else
             opt.has_terminated[] = true
         end
-
-export LineSearchFunctor, L2RegularizationWrapper, L2GradientWrapper,
-    step!, GradientDescentOptimizer, BFGSOptimizer, LBFGSOptimizer
-
-using LinearAlgebra: mul!
 
 ########################################################## UNSAFE LINEAR ALGEBRA
 
