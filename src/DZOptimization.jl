@@ -634,10 +634,13 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         copy!(opt.delta_gradient, opt.current_gradient)
         opt.gradient_function!(opt.current_gradient, opt.current_point)
         gradient_norm_squared = _zero
-        @simd ivdep for i = 1:n
+        delta_norm_squared = _zero
+        @simd for i = 1:n
             grad = opt.current_gradient[i]
             gradient_norm_squared += grad * grad
-            opt.delta_gradient[i] = grad - opt.delta_gradient[i]
+            delta = grad - opt.delta_gradient[i]
+            delta_norm_squared += delta * delta
+            opt.delta_gradient[i] = delta
         end
 
         # If gradient is zero or non-finite, terminate.
@@ -665,31 +668,44 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         history_count = max(opt.iteration_count[] - m + 1, 1)
         for iter = opt.iteration_count[]:-1:history_count
             c = Base.srem_int(iter - 1, m) + 1
-            @inbounds overlap = opt._rho[c] * dot(
+            @inbounds alpha = opt._rho[c] * dot(
                 opt.next_step_direction, opt._delta_point_history, c, n)
-            @inbounds opt._alpha[c] = overlap
+            @inbounds opt._alpha[c] = alpha
             axpy!(opt.next_step_direction,
-                overlap, opt._delta_gradient_history, c, n)
+                alpha, opt._delta_gradient_history, c, n)
         end
 
         # Compute natural step size.
-        gamma = delta_overlap / norm2(opt.delta_gradient)
-        if !isfinite(gamma)
-            gamma = sqrt(eps(T)) / max(one(T), norm2(gradient))
-        end
+        gamma = delta_overlap / delta_norm_squared
         scale!(opt.next_step_direction, gamma)
 
         # Apply backward L-BFGS correction.
         for iter = history_count:opt.iteration_count[]
             c = Base.srem_int(iter - 1, m) + 1
-            @inbounds overlap = opt._alpha[c] - opt._rho[c] * dot(
+            @inbounds beta = opt._alpha[c] - opt._rho[c] * dot(
                 opt.next_step_direction, opt._delta_gradient_history, c, n)
             axpy!(opt.next_step_direction,
-                overlap, opt._delta_point_history, c, n)
+                beta, opt._delta_point_history, c, n)
         end
 
-        @simd ivdep for i = 1:n
-            opt.next_step_direction[i] = -opt.next_step_direction[i]
+        # Verify that L-BFGS step direction is a descent direction.
+        overlap = _zero
+        @simd for i = 1:n
+            step = opt.next_step_direction[i]
+            overlap += step * opt.current_gradient[i]
+            opt.next_step_direction[i] = -step
+        end
+
+        # If not, reset step direction to negative gradient.
+        if !isfinite(overlap)
+            opt.has_terminated[] = true
+            @simd ivdep for i = 1:n
+                opt.next_step_direction[i] = _zero
+            end
+        elseif overlap <= _zero
+            copy!(opt.next_step_direction, opt.current_gradient)
+            scale!(opt.next_step_direction,
+                -opt.last_step_length[] * rsqrt(gradient_norm_squared))
         end
     end
     return opt
