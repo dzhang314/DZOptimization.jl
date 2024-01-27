@@ -8,6 +8,24 @@ using SIMD: Vec
 ######################################################### LINEAR ALGEBRA KERNELS
 
 
+@inline function dot(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
+    result = zero(T)
+    @simd for i = 1:n
+        @inbounds result += v[i] * w[i]
+    end
+    return result
+end
+
+
+@inline function dot(v::Array{T,N}, w::Matrix{T}, j::Int, n::Int) where {T,N}
+    result = zero(T)
+    @simd for i = 1:n
+        @inbounds result += v[i] * w[i, j]
+    end
+    return result
+end
+
+
 @inline _iota(::Val{M}) where {M} = Vec{M,Int}(ntuple(i -> i - 1, Val{M}()))
 
 
@@ -64,6 +82,16 @@ function axpy!(
         @inbounds dst[i] = alpha * x[i] + y[i]
     end
     return dst
+end
+
+
+function axpy!(
+    y::Array{T,D}, alpha::T, x::Matrix{T}, j::Int, n::Int
+) where {T,D}
+    @simd ivdep for i = 1:n
+        @inbounds y[i] += alpha * x[i, j]
+    end
+    return y
 end
 
 
@@ -467,8 +495,8 @@ struct LBFGSOptimizer{C,F,G,L,T,N}
     iteration_count::Array{Int,0}
     has_terminated::Array{Bool,0}
 
-    _alpha_history::Vector{T}
-    _rho_history::Vector{T}
+    _alpha::Vector{T}
+    _rho::Vector{T}
     _delta_point_history::Matrix{T}
     _delta_gradient_history::Matrix{T}
 
@@ -515,8 +543,8 @@ function LBFGSOptimizer(
         (!isfinite(inv_gradient_norm)))
 
     @assert history_length > 0
-    _alpha_history = zeros(T, history_length)
-    _rho_history = zeros(T, history_length)
+    _alpha = zeros(T, history_length)
+    _rho = zeros(T, history_length)
     _delta_point_history = zeros(T, length(current_point), history_length)
     _delta_gradient_history = zeros(T, length(current_point), history_length)
 
@@ -526,8 +554,7 @@ function LBFGSOptimizer(
         gradient_function!, current_gradient, delta_gradient,
         line_search_function!, next_step_direction, last_step_length,
         line_search_evaluator, iteration_count, has_terminated,
-        _alpha_history, _rho_history,
-        _delta_point_history, _delta_gradient_history)
+        _alpha, _rho, _delta_point_history, _delta_gradient_history)
 end
 
 
@@ -539,8 +566,8 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
     @assert n == length(opt.current_gradient)
     @assert n == length(opt.delta_gradient)
     @assert n == length(opt.next_step_direction)
-    m = length(opt._alpha_history)
-    @assert m == length(opt._rho_history)
+    m = length(opt._alpha)
+    @assert m == length(opt._rho)
     @assert (n, m) == size(opt._delta_point_history)
     @assert (n, m) == size(opt._delta_gradient_history)
 
@@ -604,9 +631,48 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             return opt
         end
 
-        # Compute next step direction.
-        # TODO
+        # Store delta point and delta gradient in history.
+        c = Base.srem_int(opt.iteration_count[] - 1, m) + 1 # cyclic index
+        copyto!(view(opt._delta_point_history, :, c), opt.delta_point)
+        copyto!(view(opt._delta_gradient_history, :, c), opt.delta_gradient)
 
+        # Compute delta overlap and store in rho.
+        delta_overlap = dot(opt.delta_point, opt.delta_gradient, n)
+        @inbounds opt._rho[c] = inv(delta_overlap)
+
+        # Compute next step direction starting from current gradient.
+        copy!(opt.next_step_direction, opt.current_gradient)
+
+        # Apply forward L-BFGS correction.
+        history_count = max(opt.iteration_count[] - m + 1, 1)
+        for iter = opt.iteration_count[]:-1:history_count
+            c = Base.srem_int(iter - 1, m) + 1
+            @inbounds overlap = opt._rho[c] * dot(
+                opt.next_step_direction, opt._delta_point_history, c, n)
+            @inbounds opt._alpha[c] = overlap
+            axpy!(opt.next_step_direction,
+                overlap, opt._delta_gradient_history, c, n)
+        end
+
+        # Compute natural step size.
+        gamma = delta_overlap / norm2(opt.delta_gradient)
+        if !isfinite(gamma)
+            gamma = sqrt(eps(T)) / max(one(T), norm2(gradient))
+        end
+        scale!(opt.next_step_direction, gamma)
+
+        # Apply backward L-BFGS correction.
+        for iter = history_count:opt.iteration_count[]
+            c = Base.srem_int(iter - 1, m) + 1
+            @inbounds overlap = opt._alpha[c] - opt._rho[c] * dot(
+                opt.next_step_direction, opt._delta_gradient_history, c, n)
+            axpy!(opt.next_step_direction,
+                overlap, opt._delta_point_history, c, n)
+        end
+
+        @simd ivdep for i = 1:n
+            opt.next_step_direction[i] = -opt.next_step_direction[i]
+        end
     end
     return opt
 end
@@ -614,48 +680,6 @@ end
 
 #=
 
-            # Store delta_point and delta_gradient in history.
-            c = Base.srem_int(opt.iteration_count[] - 1, m) + 1 # cyclic index
-            @simd ivdep for i = 1:n
-                @inbounds delta_point_history[i, c] = delta_point[i]
-            end
-            @simd ivdep for i = 1:n
-                @inbounds delta_gradient_history[i, c] = delta_gradient[i]
-            end
-            delta_overlap = dot(delta_point, delta_gradient, n)
-            @inbounds rho[c] = inv(delta_overlap)
-
-            # Compute next step direction, starting from current gradient.
-            @simd ivdep for i = 1:n
-                @inbounds next_step_direction[i] = gradient[i]
-            end
-
-            # Apply forward L-BFGS correction.
-            history_count = max(opt.iteration_count[] - m + 1, 1)
-            for iter = opt.iteration_count[]:-1:history_count
-                c = Base.srem_int(iter - 1, m) + 1
-                @inbounds overlap = rho[c] * dot(
-                    next_step_direction, delta_point_history, n, c)
-                @inbounds alpha[c] = overlap
-                add!(next_step_direction,
-                    overlap, delta_gradient_history, n, c)
-            end
-
-            # Compute natural step size.
-            gamma = delta_overlap / norm2(delta_gradient)
-            if !isfinite(gamma)
-                gamma = sqrt(eps(T)) / max(one(T), norm2(gradient))
-            end
-            scalar_mul!(next_step_direction, gamma)
-
-            # Apply backward L-BFGS correction.
-            for iter = history_count:opt.iteration_count[]
-                c = Base.srem_int(iter - 1, m) + 1
-                @inbounds overlap = alpha[c] - rho[c] * dot(
-                    next_step_direction, delta_gradient_history, n, c)
-                add!(next_step_direction,
-                    overlap, delta_point_history, n, c)
-            end
 
         else
             opt.has_terminated[] = true
@@ -671,24 +695,6 @@ end
         @inbounds x[i] *= a
     end
     return x
-end
-
-@inline function dot(v::AbstractArray{T,N},
-                     w::AbstractArray{T,N}, n::Int) where {T,N}
-    result = zero(T)
-    @simd ivdep for i = 1 : n
-        @inbounds result += conj(v[i]) * w[i]
-    end
-    return result
-end
-
-@inline function dot(v::AbstractArray{T,N},
-                     w::AbstractMatrix{T}, n::Int, j::Int) where {T,N}
-    result = zero(T)
-    @simd ivdep for i = 1 : n
-        @inbounds result += conj(v[i]) * w[i,j]
-    end
-    return result
 end
 
 @inline function identity_matrix!(A::AbstractMatrix{T}) where {T}
