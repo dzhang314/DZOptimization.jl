@@ -26,9 +26,6 @@ end
 end
 
 
-@inline _iota(::Val{M}) where {M} = Vec{M,Int}(ntuple(i -> i - 1, Val{M}()))
-
-
 function norm2(x::AbstractArray{T,D}) where {T,D}
     result = zero(real(T))
     @simd for i in eachindex(x)
@@ -36,6 +33,9 @@ function norm2(x::AbstractArray{T,D}) where {T,D}
     end
     return result
 end
+
+
+@inline _iota(::Val{M}) where {M} = Vec{M,Int}(ntuple(i -> i - 1, Val{M}()))
 
 
 function norm2_mfv(x::Array{MultiFloat{T,N},D}, ::Val{M}) where {M,T,N,D}
@@ -1193,6 +1193,12 @@ end
 
 @inline random_array(seed::I, ::Type{T}, dims::Int...) where {T,I<:Integer} =
     random_array(seed, T, dims)
+
+
+####################################################################### INCLUDES
+
+
+include("ExampleFunctions.jl")
 
 
 end # module DZOptimization
