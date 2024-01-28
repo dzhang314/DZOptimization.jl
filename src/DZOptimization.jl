@@ -539,6 +539,7 @@ struct LBFGSOptimizer{C,F,G,L,T,N}
     _rho::Vector{T}
     _delta_point_history::Matrix{T}
     _delta_gradient_history::Matrix{T}
+    _history_count::Array{Int,0}
 
 end
 
@@ -583,18 +584,21 @@ function LBFGSOptimizer(
         (!isfinite(inv_gradient_norm)))
 
     @assert history_length > 0
-    _alpha = zeros(T, history_length)
-    _rho = zeros(T, history_length)
-    _delta_point_history = zeros(T, length(current_point), history_length)
-    _delta_gradient_history = zeros(T, length(current_point), history_length)
+    _alpha = Vector{T}(undef, history_length)
+    _rho = Vector{T}(undef, history_length)
+    _delta_point_history =
+        Matrix{T}(undef, length(current_point), history_length)
+    _delta_gradient_history =
+        Matrix{T}(undef, length(current_point), history_length)
+    _history_count = fill(0)
 
     return LBFGSOptimizer{C,F,G,L,T,N}(
         constraint_function!, current_point, delta_point,
         objective_function, current_objective_value, delta_objective_value,
         gradient_function!, current_gradient, delta_gradient,
         line_search_function!, next_step_direction, last_step_length,
-        line_search_evaluator, iteration_count, has_terminated,
-        _alpha, _rho, _delta_point_history, _delta_gradient_history)
+        line_search_evaluator, iteration_count, has_terminated, _alpha, _rho,
+        _delta_point_history, _delta_gradient_history, _history_count)
 end
 
 
@@ -657,6 +661,10 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
                 opt.has_terminated[] = true
                 return opt
             end
+
+            # If gradient line search yields an improvement,
+            # we reset the Hessian approximation.
+            opt._history_count[] = 0
         end
         opt.iteration_count[] += 1
 
@@ -710,12 +718,17 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         delta_overlap = dot(opt.delta_point, opt.delta_gradient, n)
         @inbounds opt._rho[c] = inv(delta_overlap)
 
+        # Update history count.
+        hist_length = min(opt._history_count[] + 1, m)
+        hist_end = opt.iteration_count[]
+        hist_begin = hist_end - hist_length + 1
+        opt._history_count[] = hist_length
+
         # Compute next step direction starting from current gradient.
         copy!(opt.next_step_direction, opt.current_gradient)
 
         # Apply forward L-BFGS correction.
-        history_count = max(opt.iteration_count[] - m + 1, 1)
-        for iter = opt.iteration_count[]:-1:history_count
+        for iter = hist_end:-1:hist_begin
             c = Base.srem_int(iter - 1, m) + 1
             @inbounds alpha = opt._rho[c] * dot(
                 opt.next_step_direction, opt._delta_point_history, c, n)
@@ -729,7 +742,7 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         scale!(opt.next_step_direction, gamma)
 
         # Apply backward L-BFGS correction.
-        for iter = history_count:opt.iteration_count[]
+        for iter = hist_begin:hist_end
             c = Base.srem_int(iter - 1, m) + 1
             @inbounds beta = opt._alpha[c] - opt._rho[c] * dot(
                 opt.next_step_direction, opt._delta_gradient_history, c, n)
