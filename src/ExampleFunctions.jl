@@ -1,6 +1,7 @@
 module ExampleFunctions
 
-using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
+using MultiFloats
+using MultiFloats: rsqrt
 using SIMD: Vec
 
 ##################################################################### ROSENBROCK
@@ -22,6 +23,24 @@ function rosenbrock_gradient!(g::Vector{T}, v::Vector{T}) where {T}
     @inbounds g[2] = 200 * t2
     return g
 end
+
+precompile(rosenbrock_function, (Vector{Float64},))
+precompile(rosenbrock_function, (Vector{Float64x2},))
+precompile(rosenbrock_function, (Vector{Float64x3},))
+precompile(rosenbrock_function, (Vector{Float64x4},))
+precompile(rosenbrock_function, (Vector{Float64x5},))
+precompile(rosenbrock_function, (Vector{Float64x6},))
+precompile(rosenbrock_function, (Vector{Float64x7},))
+precompile(rosenbrock_function, (Vector{Float64x8},))
+
+precompile(rosenbrock_gradient!, (Vector{Float64}, Vector{Float64}))
+precompile(rosenbrock_gradient!, (Vector{Float64x2}, Vector{Float64x2}))
+precompile(rosenbrock_gradient!, (Vector{Float64x3}, Vector{Float64x3}))
+precompile(rosenbrock_gradient!, (Vector{Float64x4}, Vector{Float64x4}))
+precompile(rosenbrock_gradient!, (Vector{Float64x5}, Vector{Float64x5}))
+precompile(rosenbrock_gradient!, (Vector{Float64x6}, Vector{Float64x6}))
+precompile(rosenbrock_gradient!, (Vector{Float64x7}, Vector{Float64x7}))
+precompile(rosenbrock_gradient!, (Vector{Float64x8}, Vector{Float64x8}))
 
 ################################################################### RIESZ ENERGY
 
@@ -86,6 +105,33 @@ function riesz_gradient(points::Matrix{T}) where {T}
     return result
 end
 
+precompile(riesz_energy, (Matrix{Float64},))
+precompile(riesz_energy, (Matrix{Float64x2},))
+precompile(riesz_energy, (Matrix{Float64x3},))
+precompile(riesz_energy, (Matrix{Float64x4},))
+precompile(riesz_energy, (Matrix{Float64x5},))
+precompile(riesz_energy, (Matrix{Float64x6},))
+precompile(riesz_energy, (Matrix{Float64x7},))
+precompile(riesz_energy, (Matrix{Float64x8},))
+
+precompile(riesz_gradient!, (Matrix{Float64}, Matrix{Float64}))
+precompile(riesz_gradient!, (Matrix{Float64x2}, Matrix{Float64x2}))
+precompile(riesz_gradient!, (Matrix{Float64x3}, Matrix{Float64x3}))
+precompile(riesz_gradient!, (Matrix{Float64x4}, Matrix{Float64x4}))
+precompile(riesz_gradient!, (Matrix{Float64x5}, Matrix{Float64x5}))
+precompile(riesz_gradient!, (Matrix{Float64x6}, Matrix{Float64x6}))
+precompile(riesz_gradient!, (Matrix{Float64x7}, Matrix{Float64x7}))
+precompile(riesz_gradient!, (Matrix{Float64x8}, Matrix{Float64x8}))
+
+precompile(riesz_gradient, (Matrix{Float64},))
+precompile(riesz_gradient, (Matrix{Float64x2},))
+precompile(riesz_gradient, (Matrix{Float64x3},))
+precompile(riesz_gradient, (Matrix{Float64x4},))
+precompile(riesz_gradient, (Matrix{Float64x5},))
+precompile(riesz_gradient, (Matrix{Float64x6},))
+precompile(riesz_gradient, (Matrix{Float64x7},))
+precompile(riesz_gradient, (Matrix{Float64x8},))
+
 ################################################################ RIESZ ENERGY 2D
 
 export riesz_energy_2d, riesz_gradient_2d!, riesz_gradient_2d
@@ -144,6 +190,10 @@ function riesz_gradient_2d(points::Matrix{T}) where {T}
     riesz_gradient_2d!(result, points)
     return result
 end
+
+precompile(riesz_energy_2d, (Matrix{Float64},))
+precompile(riesz_gradient_2d!, (Matrix{Float64}, Matrix{Float64}))
+precompile(riesz_gradient_2d, (Matrix{Float64},))
 
 ######################################## RIESZ ENERGY 2D (MULTIFLOAT-VECTORIZED)
 
@@ -281,6 +331,30 @@ end
 
 @inline riesz_gradient_2d_mfv(points::Matrix{MultiFloat{T,N}}) where {T,N} =
     riesz_gradient_2d_mfv(points, Val{8}())
+
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x2},))
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x3},))
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x4},))
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x5},))
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x6},))
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x7},))
+precompile(riesz_energy_2d_mfv, (Matrix{Float64x8},))
+
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x2}, Matrix{Float64x2}))
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x3}, Matrix{Float64x3}))
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x4}, Matrix{Float64x4}))
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x5}, Matrix{Float64x5}))
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x6}, Matrix{Float64x6}))
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x7}, Matrix{Float64x7}))
+precompile(riesz_gradient_2d_mfv!, (Matrix{Float64x8}, Matrix{Float64x8}))
+
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x2},))
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x3},))
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x4},))
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x5},))
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x6},))
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x7},))
+precompile(riesz_gradient_2d_mfv, (Matrix{Float64x8},))
 
 ############################################################# FINITE DIFFERENCES
 
