@@ -2,97 +2,6 @@ module DZOptimization
 
 
 using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
-using SIMD: Vec
-
-
-######################################################### LINEAR ALGEBRA KERNELS
-
-
-@inline function dot(v::Array{T,N}, w::Array{T,N}, n::Int) where {T,N}
-    result = zero(T)
-    @simd for i = 1:n
-        @inbounds result += v[i] * w[i]
-    end
-    return result
-end
-
-
-@inline function dot(v::Array{T,N}, w::Matrix{T}, j::Int, n::Int) where {T,N}
-    result = zero(T)
-    @simd for i = 1:n
-        @inbounds result += v[i] * w[i, j]
-    end
-    return result
-end
-
-
-function norm2(x::AbstractArray{T,D}) where {T,D}
-    result = zero(real(T))
-    @simd for i in eachindex(x)
-        result += abs2(x[i])
-    end
-    return result
-end
-
-
-@inline _iota(::Val{M}) where {M} = Vec{M,Int}(ntuple(i -> i - 1, Val{M}()))
-
-
-function norm2_mfv(x::Array{MultiFloat{T,N},D}, ::Val{M}) where {M,T,N,D}
-    n = length(x)
-    ptr = pointer(x)
-    iota = _iota(Val{M}()) - 1
-    i = 1
-    result_vector = zero(MultiFloatVec{M,T,N})
-    while i + M <= n + 1
-        result_vector += abs2(mfvgather(ptr, iota + i))
-        i += M
-    end
-    result_scalar = zero(MultiFloat{T,N})
-    @inbounds while i <= n
-        result_scalar += abs2(x[i])
-        i += 1
-    end
-    return result_scalar + sum(result_vector)
-end
-
-
-# TODO: How do we allow the user to specify the vector length?
-# For now, we default to vectors of length 8, since these are fastest on all
-# platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
-@inline norm2(x::Array{MultiFloat{T,N},D}) where {T,N,D} =
-    norm2_mfv(x, Val{8}())
-
-
-@inline inv_norm(x::AbstractArray{T,D}) where {T,D} = rsqrt(norm2(x))
-
-
-function scale!(x::AbstractArray{T,D}, alpha::T) where {T,D}
-    @simd ivdep for i in eachindex(x)
-        x[i] *= alpha
-    end
-    return x
-end
-
-
-function axpy!(
-    dst::Array{T,D}, alpha::T, x::Array{T,D}, y::Array{T,D}, n::Int
-) where {T,D}
-    @simd ivdep for i = 1:n
-        @inbounds dst[i] = alpha * x[i] + y[i]
-    end
-    return dst
-end
-
-
-function axpy!(
-    y::Array{T,D}, alpha::T, x::Matrix{T}, j::Int, n::Int
-) where {T,D}
-    @simd ivdep for i = 1:n
-        @inbounds y[i] += alpha * x[i, j]
-    end
-    return y
-end
 
 
 ######################################################### OPTIMIZATION UTILITIES
@@ -460,9 +369,7 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
         # Update current point and apply constraints.
         copy!(opt.delta_point, opt.current_point)
-        @simd ivdep for i = 1:n
-            opt.current_point[i] += step_size * opt.next_step_direction[i]
-        end
+        axpy!(opt.current_point, step_size, opt.next_step_direction, n)
         @assert opt.constraint_function!(opt.current_point)
 
         # Compute delta point and step length.
