@@ -1,6 +1,6 @@
 module Kernels
 
-using MultiFloats: rsqrt
+using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
 using SIMD: Vec
 
 ###################################################################### UTILITIES
@@ -19,6 +19,27 @@ using SIMD: Vec
     return result
 end
 
+@inline function dot_mfv(
+    v::Array{MultiFloat{T,N},D}, w::Array{MultiFloat{T,N},D}, n::Int, ::Val{M}
+) where {M,T,N,D}
+    iota = _iota(Val{M}())
+    i = 1
+    result_vector = zero(MultiFloatVec{M,T,N})
+    while i + M <= n + 1
+        result_vector += mfvgather(v, iota + i) * mfvgather(w, iota + i)
+        i += M
+    end
+    result_scalar = zero(MultiFloat{T,N})
+    @inbounds while i <= n
+        result_scalar += v[i] * w[i]
+        i += 1
+    end
+    return result_scalar + sum(result_vector)
+end
+
+@inline dot(v::Array{MultiFloat{T,N},D}, w::Array{MultiFloat{T,N},D}, n::Int
+) where {T,N,D} = dot_mfv(v, w, n, Val{8}())
+
 @inline function dot_column(
     v::Array{T,D}, w::Matrix{T}, j::Int, n::Int
 ) where {T,D}
@@ -31,7 +52,9 @@ end
 
 ################################################################# EUCLIDEAN NORM
 
-@inline function norm2(x::Array{T,D}, n::Int) where {T,D}
+@inline function norm2(
+    x::Array{T,D}, n::Int
+) where {T,D}
     result = zero(T)
     @simd for i = 1:n
         @inbounds result += abs2(x[i])
@@ -39,28 +62,30 @@ end
     return result
 end
 
-# function norm2_mfv(x::Array{MultiFloat{T,N},D}, ::Val{M}) where {M,T,N,D}
-#     n = length(x)
-#     iota = _iota(Val{M}())
-#     i = 1
-#     result_vector = zero(MultiFloatVec{M,T,N})
-#     while i + M <= n + 1
-#         result_vector += abs2(mfvgather(x, iota + i))
-#         i += M
-#     end
-#     result_scalar = zero(MultiFloat{T,N})
-#     @inbounds while i <= n
-#         result_scalar += abs2(x[i])
-#         i += 1
-#     end
-#     return result_scalar + sum(result_vector)
-# end
+@inline function norm2_mfv(
+    x::Array{MultiFloat{T,N},D}, n::Int, ::Val{M}
+) where {M,T,N,D}
+    iota = _iota(Val{M}())
+    i = 1
+    result_vector = zero(MultiFloatVec{M,T,N})
+    while i + M <= n + 1
+        result_vector += abs2(mfvgather(x, iota + i))
+        i += M
+    end
+    result_scalar = zero(MultiFloat{T,N})
+    @inbounds while i <= n
+        result_scalar += abs2(x[i])
+        i += 1
+    end
+    return result_scalar + sum(result_vector)
+end
 
-# # TODO: How do we allow the user to specify the vector length?
-# # For now, we default to vectors of length 8, since these are fastest on all
-# # platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
-# @inline norm2(x::Array{MultiFloat{T,N},D}) where {T,N,D} =
-#     norm2_mfv(x, Val{8}())
+# TODO: How do we allow the user to specify the vector length?
+# For now, we default to vectors of length 8, since these are fastest on all
+# platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
+@inline norm2(
+    x::Array{MultiFloat{T,N},D}, n::Int
+) where {T,N,D} = norm2_mfv(x, n, Val{8}())
 
 ####################################################################### NEGATION
 
