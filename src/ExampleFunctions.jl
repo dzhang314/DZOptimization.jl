@@ -157,9 +157,8 @@ function riesz_energy_2d_mfv(
 ) where {M,T,N}
     dimension, num_points = size(points)
     @assert dimension == 2
-    ptr = pointer(points)
-    iota_x = 2 * (_iota(Val{M}()) - 1)
-    iota_y = iota_x + 1
+    iota_y = 2 * _iota(Val{M}())
+    iota_x = iota_y - 1
     result_scalar = zero(MultiFloat{T,N})
     result_vector = zero(MultiFloatVec{M,T,N})
     @inbounds for j = 2:num_points
@@ -168,8 +167,8 @@ function riesz_energy_2d_mfv(
         i = 1
         while i + M <= j
             twice_i = i + i
-            xi = mfvgather(ptr, iota_x + twice_i)
-            yi = mfvgather(ptr, iota_y + twice_i)
+            xi = mfvgather(points, iota_x + twice_i)
+            yi = mfvgather(points, iota_y + twice_i)
             dx = xi - xj
             dy = yi - yj
             result_vector += rsqrt(dx * dx + dy * dy)
@@ -198,9 +197,8 @@ function riesz_gradient_2d_mfv!(
     dimension, num_points = size(points)
     @assert (dimension, num_points) == size(gradient)
     @assert dimension == 2
-    ptr = pointer(points)
-    iota_x = 2 * (_iota(Val{M}()) - 1)
-    iota_y = iota_x + 1
+    iota_y = 2 * _iota(Val{M}())
+    iota_x = iota_y - 1
     @inbounds for j = 1:num_points
         gx_scalar = zero(MultiFloat{T,N})
         gy_scalar = zero(MultiFloat{T,N})
@@ -211,8 +209,8 @@ function riesz_gradient_2d_mfv!(
         i = 1
         while i + M <= j
             twice_i = i + i
-            xi = mfvgather(ptr, iota_x + twice_i)
-            yi = mfvgather(ptr, iota_y + twice_i)
+            xi = mfvgather(points, iota_x + twice_i)
+            yi = mfvgather(points, iota_y + twice_i)
             dx = xi - xj
             dy = yi - yj
             dist_sq = dx * dx + dy * dy
@@ -237,8 +235,8 @@ function riesz_gradient_2d_mfv!(
         i = j + 1
         while i + M <= num_points + 1
             twice_i = i + i
-            xi = mfvgather(ptr, iota_x + twice_i)
-            yi = mfvgather(ptr, iota_y + twice_i)
+            xi = mfvgather(points, iota_x + twice_i)
+            yi = mfvgather(points, iota_y + twice_i)
             dx = xi - xj
             dy = yi - yj
             dist_sq = dx * dx + dy * dy
