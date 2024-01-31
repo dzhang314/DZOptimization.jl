@@ -1,7 +1,9 @@
 module DZOptimization
 
 
-using MultiFloats: MultiFloat, MultiFloatVec, rsqrt, mfvgather
+include("Kernels.jl")
+using .Kernels: dot, dot_column, norm2, inv_norm,
+    negate!, scale!, delta!, axpy!, axpy_column!
 
 
 ######################################################### OPTIMIZATION UTILITIES
@@ -350,9 +352,6 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
     if !opt.has_terminated[]
 
-        # Construct constants.
-        _zero = zero(T)
-
         # Perform line search.
         step_size, objective_value = opt.line_search_function!(
             opt.line_search_evaluator,
@@ -363,9 +362,8 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
             !(objective_value < opt.current_objective_value[]))
             opt.has_terminated[] = true
             return opt
-        else
-            opt.iteration_count[] += 1
         end
+        opt.iteration_count[] += 1
 
         # Update current point and apply constraints.
         copy!(opt.delta_point, opt.current_point)
@@ -373,13 +371,8 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         @assert opt.constraint_function!(opt.current_point)
 
         # Compute delta point and step length.
-        step_length = _zero
-        @simd for i = 1:n
-            delta = opt.current_point[i] - opt.delta_point[i]
-            opt.delta_point[i] = delta
-            step_length += delta * delta
-        end
-        step_length = sqrt(step_length)
+        delta!(opt.delta_point, opt.current_point, n)
+        step_length = sqrt(norm2(opt.delta_point))
         opt.last_step_length[] = step_length
 
         # Update objective value and delta.
@@ -390,25 +383,18 @@ function step!(opt::GradientDescentOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Update gradient and delta.
         copy!(opt.delta_gradient, opt.current_gradient)
         opt.gradient_function!(opt.current_gradient, opt.current_point)
-        gradient_norm_squared = _zero
-        @simd ivdep for i = 1:n
-            grad = opt.current_gradient[i]
-            gradient_norm_squared += grad * grad
-            opt.delta_gradient[i] = grad - opt.delta_gradient[i]
-        end
+        delta!(opt.delta_gradient, opt.current_gradient, n)
 
         # If gradient is zero or non-finite, terminate.
-        if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
+        inv_gradient_norm = inv_norm(opt.current_gradient)
+        if !isfinite(inv_gradient_norm)
             opt.has_terminated[] = true
             return opt
         end
 
         # Compute next step direction.
-        step_scale = -step_length * rsqrt(gradient_norm_squared)
-        @simd ivdep for i = 1:n
-            opt.next_step_direction[i] = step_scale * opt.current_gradient[i]
-        end
-
+        scale!(opt.next_step_direction,
+            -step_length * inv_gradient_norm, opt.current_gradient, n)
     end
     return opt
 end
@@ -577,19 +563,12 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
 
         # Update current point and apply constraints.
         copy!(opt.delta_point, opt.current_point)
-        @simd ivdep for i = 1:n
-            opt.current_point[i] += step_size * opt.next_step_direction[i]
-        end
+        axpy!(opt.current_point, step_size, opt.next_step_direction, n)
         @assert opt.constraint_function!(opt.current_point)
 
         # Compute delta point and step length.
-        step_length = _zero
-        @simd for i = 1:n
-            delta = opt.current_point[i] - opt.delta_point[i]
-            opt.delta_point[i] = delta
-            step_length += delta * delta
-        end
-        step_length = sqrt(step_length)
+        delta!(opt.delta_point, opt.current_point, n)
+        step_length = sqrt(norm2(opt.delta_point))
         opt.last_step_length[] = step_length
 
         # Update objective value and delta.
@@ -600,18 +579,11 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Update gradient and delta.
         copy!(opt.delta_gradient, opt.current_gradient)
         opt.gradient_function!(opt.current_gradient, opt.current_point)
-        gradient_norm_squared = _zero
-        delta_norm_squared = _zero
-        @simd for i = 1:n
-            grad = opt.current_gradient[i]
-            gradient_norm_squared += grad * grad
-            delta = grad - opt.delta_gradient[i]
-            delta_norm_squared += delta * delta
-            opt.delta_gradient[i] = delta
-        end
+        delta!(opt.delta_gradient, opt.current_gradient, n)
 
         # If gradient is zero or non-finite, terminate.
-        if iszero(gradient_norm_squared) || !isfinite(gradient_norm_squared)
+        inv_gradient_norm = inv_norm(opt.current_gradient)
+        if !isfinite(inv_gradient_norm)
             opt.has_terminated[] = true
             return opt
         end
@@ -637,41 +609,37 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Apply forward L-BFGS correction.
         for iter = hist_end:-1:hist_begin
             c = Base.srem_int(iter - 1, m) + 1
-            @inbounds alpha = opt._rho[c] * dot(
+            @inbounds alpha = opt._rho[c] * dot_column(
                 opt.next_step_direction, opt._delta_point_history, c, n)
             @inbounds opt._alpha[c] = alpha
-            axpy!(opt.next_step_direction,
+            axpy_column!(opt.next_step_direction,
                 alpha, opt._delta_gradient_history, c, n)
         end
 
         # Compute natural step size.
-        gamma = delta_overlap / delta_norm_squared
+        gamma = delta_overlap / norm2(opt.delta_gradient)
         scale!(opt.next_step_direction, gamma)
 
         # Apply backward L-BFGS correction.
         for iter = hist_begin:hist_end
             c = Base.srem_int(iter - 1, m) + 1
-            @inbounds beta = opt._alpha[c] - opt._rho[c] * dot(
+            @inbounds beta = opt._alpha[c] - opt._rho[c] * dot_column(
                 opt.next_step_direction, opt._delta_gradient_history, c, n)
-            axpy!(opt.next_step_direction,
+            axpy_column!(opt.next_step_direction,
                 beta, opt._delta_point_history, c, n)
         end
 
         # Verify that L-BFGS step direction is a descent direction.
-        overlap = _zero
-        @simd for i = 1:n
-            step = opt.next_step_direction[i]
-            overlap += step * opt.current_gradient[i]
-            opt.next_step_direction[i] = -step
-        end
+        gradient_overlap = dot(
+            negate!(opt.next_step_direction, n), opt.current_gradient, n)
 
         # If not, reset step direction to negative gradient.
-        if !isfinite(overlap)
+        if !isfinite(gradient_overlap)
             opt.has_terminated[] = true
-        elseif overlap <= _zero
-            copy!(opt.next_step_direction, opt.current_gradient)
+        elseif gradient_overlap >= _zero
+            println("RESET")
             scale!(opt.next_step_direction,
-                -opt.last_step_length[] * rsqrt(gradient_norm_squared))
+                -step_length * inv_gradient_norm, opt.current_gradient, n)
         end
     end
     return opt

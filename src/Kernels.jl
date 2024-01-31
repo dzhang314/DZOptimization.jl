@@ -1,5 +1,6 @@
 module Kernels
 
+using MultiFloats: rsqrt
 using SIMD: Vec
 
 ###################################################################### UTILITIES
@@ -33,7 +34,7 @@ end
 @inline function norm2(x::Array{T,D}, n::Int) where {T,D}
     result = zero(T)
     @simd for i = 1:n
-        result += abs2(x[i])
+        @inbounds result += abs2(x[i])
     end
     return result
 end
@@ -61,25 +62,51 @@ end
 # @inline norm2(x::Array{MultiFloat{T,N},D}) where {T,N,D} =
 #     norm2_mfv(x, Val{8}())
 
-########################################################## SCALAR MULTIPLICATION
+####################################################################### NEGATION
 
-function scale!(x::AbstractArray{T,D}, alpha::T) where {T,D}
-    @simd ivdep for i in eachindex(x)
-        x[i] *= alpha
+@inline function negate!(
+    x::Array{T,D}, n::Int
+) where {T,D}
+    @simd ivdep for i = 1:n
+        @inbounds x[i] = -x[i]
     end
     return x
 end
 
-function scale!(x::AbstractArray{T,D}, alpha::T) where {T,D}
-    @simd ivdep for i in eachindex(x)
-        x[i] *= alpha
+########################################################## SCALAR MULTIPLICATION
+
+@inline function scale!(
+    x::Array{T,D}, alpha::T, n::Int
+) where {T,D}
+    @simd ivdep for i = 1:n
+        @inbounds x[i] *= alpha
     end
     return x
+end
+
+@inline function scale!(
+    dst::Array{T,D}, alpha::T, x::Array{T,D}, n::Int
+) where {T,D}
+    @simd ivdep for i = 1:n
+        @inbounds dst[i] = alpha * x[i]
+    end
+    return x
+end
+
+########################################################################## DELTA
+
+@inline function delta!(
+    y::Array{T,D}, x::Array{T,D}, n::Int
+) where {T,D}
+    @simd ivdep for i = 1:n
+        @inbounds y[i] = x[i] - y[i]
+    end
+    return y
 end
 
 ########################################################################### AXPY
 
-function axpy!(
+@inline function axpy!(
     y::Array{T,D}, alpha::T, x::Array{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
@@ -88,7 +115,7 @@ function axpy!(
     return y
 end
 
-function axpy!(
+@inline function axpy!(
     dst::Array{T,D}, alpha::T, x::Array{T,D}, y::Array{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
@@ -97,7 +124,7 @@ function axpy!(
     return dst
 end
 
-function axpy_column!(
+@inline function axpy_column!(
     y::Array{T,D}, alpha::T, x::Matrix{T}, j::Int, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
@@ -108,6 +135,13 @@ end
 
 ##################################################################### INTERFACES
 
-@inline inv_norm(x::AbstractArray{T,D}) where {T,D} = rsqrt(norm2(x))
+@inline norm2(x::Array{T,D}) where {T,D} = norm2(x, length(x))
+
+@inline inv_norm(x::Array{T,D}) where {T,D} = rsqrt(norm2(x))
+
+@inline negate!(x::Array{T,D}) where {T,D} = negate!(x, length(x))
+
+@inline scale!(x::Array{T,D}, alpha::T) where {T,D} =
+    scale!(x, alpha, length(x))
 
 end # module Kernels
