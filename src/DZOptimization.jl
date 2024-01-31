@@ -206,42 +206,80 @@ function (qls::QuadraticLineSearch)(
 end
 
 
-################################################################ BOX CONSTRAINTS
+############################################################## L2 REGULARIZATION
 
 
-export UnitBoxConstraint, UnitBoxGradientWrapper
+export L2RegularizationWrapper, L2GradientWrapper
 
 
-struct UnitBoxConstraint
+struct L2RegularizationWrapper{F,T}
+    objective_function::F
+    lambda::T
 end
 
 
-function (::UnitBoxConstraint)(x::AbstractArray{T,D}) where {T,D}
-    _zero = zero(T)
-    _one = one(T)
-    @simd ivdep for i in eachindex(x)
-        x[i] = clamp(x[i], _zero, _one)
+struct L2GradientWrapper{G,T}
+    gradient_function!::G
+    lambda::T
+end
+
+
+function (wrapper::L2RegularizationWrapper{F,T})(x::Array{T,D}) where {F,T,D}
+    return wrapper.objective_function(x) + wrapper.lambda * norm2(x)
+end
+
+
+function (wrapper::L2GradientWrapper{G,T})(
+    g::Array{T,D}, x::Array{T,D}
+) where {G,T,D}
+    n = length(g)
+    @assert n == length(x)
+    wrapper.gradient_function!(g, x)
+    axpy!(g, wrapper.lambda + wrapper.lambda, x, n)
+    return g
+end
+
+
+################################################################ BOX CONSTRAINTS
+
+
+export UniformBoxConstraint, UniformBoxGradientWrapper
+
+
+struct UniformBoxConstraint{T}
+    lower_bound::T
+    upper_bound::T
+end
+
+
+function (constraint::UniformBoxConstraint{T})(
+    x::Array{T,D}
+) where {T,D}
+    n = length(x)
+    @simd ivdep for i = 1:n
+        x[i] = clamp(x[i], constraint.lower_bound, constraint.upper_bound)
     end
     return true
 end
 
 
-struct UnitBoxGradientWrapper{G}
+struct UniformBoxGradientWrapper{G,T}
     gradient_function!::G
+    lower_bound::T
+    upper_bound::T
 end
 
 
-function (wrapper::UnitBoxGradientWrapper{G})(
+function (wrapper::UniformBoxGradientWrapper{G,T})(
     g::Array{T,N}, x::Array{T,N}
 ) where {G,T,N}
     n = length(g)
     @assert n == length(x)
     wrapper.gradient_function!(g, x)
     _zero = zero(T)
-    _one = one(T)
     @simd ivdep for i = 1:n
-        if (((x[i] <= _zero) && (g[i] >= _zero)) ||
-            ((x[i] >= _one) && (g[i] <= _zero)))
+        if (((x[i] <= wrapper.lower_bound) && (g[i] >= _zero)) ||
+            ((x[i] >= wrapper.upper_bound) && (g[i] <= _zero)))
             g[i] = _zero
         end
     end
@@ -673,33 +711,6 @@ end
 
 @inline linear_view(x::Array{T,N}) where {T,N} =
     reshape(view(x, ntuple(_ -> Colon(), N)...), length(x))
-
-######################################################## REGULARIZATION WRAPPERS
-
-struct L2RegularizationWrapper{F,T}
-    wrapped_function::F
-    lambda::T
-end
-
-struct L2GradientWrapper{G,T}
-    wrapped_gradient!::G
-    lambda::T
-end
-
-function (wrapper::L2RegularizationWrapper{F,T})(
-          x::AbstractArray{T,N}) where {F,T,N}
-    return wrapper.wrapped_function(x) + half(T) * wrapper.lambda * norm2(x)
-end
-
-function (wrapper::L2GradientWrapper{G,T})(
-          g::AbstractArray{T,N}, x::AbstractArray{T,N}) where {G,T,N}
-    wrapper.wrapped_gradient!(g, x)
-    lambda = wrapper.lambda
-    @simd ivdep for i = 1 : length(g)
-        @inbounds g[i] += lambda * x[i]
-    end
-    return g
-end
 
 ########################################################################### BFGS
 
