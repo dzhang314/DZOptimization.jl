@@ -598,10 +598,10 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         @inbounds opt._rho[c] = inv(delta_overlap)
 
         # Update history count.
-        hist_length = min(opt._history_count[] + 1, m)
+        hist_count = min(opt._history_count[] + 1, m)
         hist_end = opt.iteration_count[]
-        hist_begin = hist_end - hist_length + 1
-        opt._history_count[] = hist_length
+        hist_begin = hist_end - hist_count + 1
+        opt._history_count[] = hist_count
 
         # Compute next step direction starting from current gradient.
         copy!(opt.next_step_direction, opt.current_gradient)
@@ -617,8 +617,8 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         end
 
         # Compute natural step size.
-        gamma = delta_overlap / norm2(opt.delta_gradient)
-        scale!(opt.next_step_direction, gamma)
+        scale!(opt.next_step_direction,
+            delta_overlap / norm2(opt.delta_gradient))
 
         # Apply backward L-BFGS correction.
         for iter = hist_begin:hist_end
@@ -637,7 +637,6 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         if !isfinite(gradient_overlap)
             opt.has_terminated[] = true
         elseif gradient_overlap >= _zero
-            println("RESET")
             scale!(opt.next_step_direction,
                 -step_length * inv_gradient_norm, opt.current_gradient, n)
         end
