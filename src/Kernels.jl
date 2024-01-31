@@ -9,9 +9,7 @@ using SIMD: Vec
 
 #################################################################### DOT PRODUCT
 
-@inline function dot(
-    v::Array{T,D}, w::Array{T,D}, n::Int
-) where {T,D}
+@inline function dot(v::Array{T,D}, w::Array{T,D}, n::Int) where {T,D}
     result = zero(T)
     @simd for i = 1:n
         @inbounds result += v[i] * w[i]
@@ -52,9 +50,7 @@ end
 
 ################################################################# EUCLIDEAN NORM
 
-@inline function norm2(
-    x::Array{T,D}, n::Int
-) where {T,D}
+@inline function norm2(x::Array{T,D}, n::Int) where {T,D}
     result = zero(T)
     @simd for i = 1:n
         @inbounds result += abs2(x[i])
@@ -62,8 +58,7 @@ end
     return result
 end
 
-@inline function norm2_mfv(
-    x::Array{MultiFloat{T,N},D}, n::Int, ::Val{M}
+@inline function norm2_mfv(x::Array{MultiFloat{T,N},D}, n::Int, ::Val{M}
 ) where {M,T,N,D}
     iota = _iota(Val{M}())
     i = 1
@@ -83,8 +78,7 @@ end
 # TODO: How do we allow the user to specify the vector length?
 # For now, we default to vectors of length 8, since these are fastest on all
 # platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
-@inline norm2(
-    x::Array{MultiFloat{T,N},D}, n::Int
+@inline norm2(x::Array{MultiFloat{T,N},D}, n::Int
 ) where {T,N,D} = norm2_mfv(x, n, Val{8}())
 
 ####################################################################### NEGATION
