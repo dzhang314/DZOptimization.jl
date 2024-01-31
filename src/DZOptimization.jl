@@ -218,18 +218,17 @@ struct L2RegularizationWrapper{F,T}
 end
 
 
+@inline (wrapper::L2RegularizationWrapper{F,T})(x::Array{T,D}) where {F,T,D} =
+    wrapper.objective_function(x) + wrapper.lambda * norm2(x)
+
+
 struct L2GradientWrapper{G,T}
     gradient_function!::G
     lambda::T
 end
 
 
-function (wrapper::L2RegularizationWrapper{F,T})(x::Array{T,D}) where {F,T,D}
-    return wrapper.objective_function(x) + wrapper.lambda * norm2(x)
-end
-
-
-function (wrapper::L2GradientWrapper{G,T})(
+@inline function (wrapper::L2GradientWrapper{G,T})(
     g::Array{T,D}, x::Array{T,D}
 ) where {G,T,D}
     n = length(g)
@@ -252,7 +251,7 @@ struct UniformBoxConstraint{T}
 end
 
 
-function (constraint::UniformBoxConstraint{T})(
+@inline function (constraint::UniformBoxConstraint{T})(
     x::Array{T,D}
 ) where {T,D}
     n = length(x)
@@ -270,7 +269,7 @@ struct UniformBoxGradientWrapper{G,T}
 end
 
 
-function (wrapper::UniformBoxGradientWrapper{G,T})(
+@inline function (wrapper::UniformBoxGradientWrapper{G,T})(
     g::Array{T,N}, x::Array{T,N}
 ) where {G,T,N}
     n = length(g)
