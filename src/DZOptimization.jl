@@ -1,6 +1,8 @@
 module DZOptimization
 
 
+include("ExampleFunctions.jl")
+include("PCG.jl")
 include("Kernels.jl")
 using .Kernels: dot, dot_column, norm2, inv_norm,
     negate!, scale!, delta!, axpy!, axpy_column!
@@ -1119,13 +1121,6 @@ function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
 end
 
 =#
-
-
-####################################################################### INCLUDES
-
-
-include("ExampleFunctions.jl")
-include("PCG.jl")
 
 
 end # module DZOptimization
