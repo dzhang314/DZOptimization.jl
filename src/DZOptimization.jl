@@ -63,7 +63,7 @@ function find_three_point_bracket(
     # condition by comparing the coordinates of the initial and new points.
     step_is_zero = true
     point_changed = false
-    @simd for i = 1:n
+    @inbounds for i = 1:n
         step = lse.step_direction[i]
         step_is_zero &= iszero(step)
         initial = lse.initial_point[i]
@@ -85,7 +85,7 @@ function find_three_point_bracket(
         step_size += step_size
         step_is_small = true
         point_changed = false
-        @simd for i = 1:n
+        @inbounds for i = 1:n
             initial = lse.initial_point[i]
             new = initial + step_size * lse.step_direction[i]
             point_changed |= (initial != new)

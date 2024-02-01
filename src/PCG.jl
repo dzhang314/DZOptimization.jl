@@ -12,8 +12,8 @@ export random_fill!, random_array
     x::AbstractArray{T,D}, seed::I
 ) where {T,D,I<:Integer}
     state = pcg_advance(0x14057B7EF767814F + (seed % UInt64))
-    @simd for i in eachindex(x)
-        x[i] = 2.3283064365386962890625E-10 * pcg_extract(state)
+    for i in eachindex(x)
+        @inbounds x[i] = 2.3283064365386962890625E-10 * pcg_extract(state)
         state = pcg_advance(state)
     end
     return x

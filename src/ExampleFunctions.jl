@@ -29,11 +29,12 @@ export riesz_energy, riesz_gradient!, riesz_gradient
 
 function riesz_energy(points::Matrix{T}) where {T}
     dimension, num_points = size(points)
-    result = zero(T)
+    _zero = zero(T)
+    result = _zero
     @inbounds for j = 2:num_points
         for i = 1:j-1
-            dist_sq = zero(T)
-            @simd for k = 1:dimension
+            dist_sq = _zero
+            for k = 1:dimension
                 dist = points[k, i] - points[k, j]
                 dist_sq += dist * dist
             end
@@ -46,13 +47,14 @@ end
 function riesz_gradient!(gradient::Matrix{T}, points::Matrix{T}) where {T}
     dimension, num_points = size(points)
     @assert (dimension, num_points) == size(gradient)
+    _zero = zero(T)
     @inbounds for j = 1:num_points
         @simd ivdep for k = 1:dimension
-            gradient[k, j] = zero(T)
+            gradient[k, j] = _zero
         end
         for i = 1:j-1
-            dist_sq = zero(T)
-            @simd for k = 1:dimension
+            dist_sq = _zero
+            for k = 1:dimension
                 dist = points[k, i] - points[k, j]
                 dist_sq += dist * dist
             end
@@ -64,8 +66,8 @@ function riesz_gradient!(gradient::Matrix{T}, points::Matrix{T}) where {T}
             end
         end
         for i = j+1:num_points
-            dist_sq = zero(T)
-            @simd for k = 1:dimension
+            dist_sq = _zero
+            for k = 1:dimension
                 dist = points[k, i] - points[k, j]
                 dist_sq += dist * dist
             end
@@ -97,7 +99,7 @@ function riesz_energy_2d(points::Matrix{T}) where {T}
     @inbounds for j = 2:num_points
         xj = points[1, j]
         yj = points[2, j]
-        @simd for i = 1:j-1
+        for i = 1:j-1
             dx = points[1, i] - xj
             dy = points[2, i] - yj
             result += rsqrt(dx * dx + dy * dy)
@@ -110,9 +112,10 @@ function riesz_gradient_2d!(gradient::Matrix{T}, points::Matrix{T}) where {T}
     dimension, num_points = size(points)
     @assert (dimension, num_points) == size(gradient)
     @assert dimension == 2
+    _zero = zero(T)
     @inbounds for j = 1:num_points
-        gx = zero(T)
-        gy = zero(T)
+        gx = _zero
+        gy = _zero
         xj = points[1, j]
         yj = points[2, j]
         for i = 1:j-1

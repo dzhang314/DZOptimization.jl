@@ -11,7 +11,7 @@ using SIMD: Vec
 
 @inline function dot(v::Array{T,D}, w::Array{T,D}, n::Int) where {T,D}
     result = zero(T)
-    @simd for i = 1:n
+    for i = 1:n
         @inbounds result += v[i] * w[i]
     end
     return result
@@ -42,7 +42,7 @@ end
     v::Array{T,D}, w::Matrix{T}, j::Int, n::Int
 ) where {T,D}
     result = zero(T)
-    @simd for i = 1:n
+    for i = 1:n
         @inbounds result += v[i] * w[i, j]
     end
     return result
@@ -52,7 +52,7 @@ end
 
 @inline function norm2(x::Array{T,D}, n::Int) where {T,D}
     result = zero(T)
-    @simd for i = 1:n
+    for i = 1:n
         @inbounds result += abs2(x[i])
     end
     return result
