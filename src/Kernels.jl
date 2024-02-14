@@ -134,6 +134,28 @@ end
     return dst
 end
 
+################################################################################
+
+function orthogonalize_columns!(A::Matrix{T}) where {T}
+    n, m = size(A)
+    @inbounds for i = 1:m
+        A_i = view(A, :, i)
+        squared_norm = norm2(A_i, n)
+        if !iszero(squared_norm)
+            inv_norm = rsqrt(squared_norm)
+            # diagonal entry of R is inv(inv_norm)
+            scale!(A_i, inv_norm, n)
+            for j = i+1:m
+                A_j = view(A, :, j)
+                overlap = dot(A_i, A_j, n)
+                # row of R is overlap
+                axpy!(A_j, -overlap, A_i, n)
+            end
+        end
+    end
+    return A
+end
+
 ##################################################################### INTERFACES
 
 @inline norm2(x::Array{T,D}) where {T,D} = norm2(x, length(x))
