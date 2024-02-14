@@ -9,7 +9,9 @@ using SIMD: Vec
 
 #################################################################### DOT PRODUCT
 
-@inline function dot(v::Array{T,D}, w::Array{T,D}, n::Int) where {T,D}
+@inline function dot(
+    v::AbstractArray{T,D}, w::AbstractArray{T,D}, n::Int
+) where {T,D}
     result = zero(T)
     for i = 1:n
         @inbounds result += v[i] * w[i]
@@ -42,19 +44,9 @@ end
 # TODO: Is there a way to vectorize dot products so that the result does not
 # depend on the vector length?
 
-@inline function dot_column(
-    v::Array{T,D}, w::Matrix{T}, j::Int, n::Int
-) where {T,D}
-    result = zero(T)
-    for i = 1:n
-        @inbounds result += v[i] * w[i, j]
-    end
-    return result
-end
-
 ################################################################# EUCLIDEAN NORM
 
-@inline function norm2(x::Array{T,D}, n::Int) where {T,D}
+@inline function norm2(x::AbstractArray{T,D}, n::Int) where {T,D}
     result = zero(T)
     for i = 1:n
         @inbounds result += abs2(x[i])
@@ -82,7 +74,7 @@ end
 ####################################################################### NEGATION
 
 @inline function negate!(
-    x::Array{T,D}, n::Int
+    x::AbstractArray{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
         @inbounds x[i] = -x[i]
@@ -93,7 +85,7 @@ end
 ########################################################## SCALAR MULTIPLICATION
 
 @inline function scale!(
-    x::Array{T,D}, alpha::T, n::Int
+    x::AbstractArray{T,D}, alpha::T, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
         @inbounds x[i] *= alpha
@@ -102,7 +94,7 @@ end
 end
 
 @inline function scale!(
-    dst::Array{T,D}, alpha::T, x::Array{T,D}, n::Int
+    dst::AbstractArray{T,D}, alpha::T, x::AbstractArray{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
         @inbounds dst[i] = alpha * x[i]
@@ -113,7 +105,7 @@ end
 ########################################################################## DELTA
 
 @inline function delta!(
-    y::Array{T,D}, x::Array{T,D}, n::Int
+    y::AbstractArray{T,D}, x::AbstractArray{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
         @inbounds y[i] = x[i] - y[i]
@@ -124,7 +116,7 @@ end
 ########################################################################### AXPY
 
 @inline function axpy!(
-    y::Array{T,D}, alpha::T, x::Array{T,D}, n::Int
+    y::AbstractArray{T,D}, alpha::T, x::AbstractArray{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
         @inbounds y[i] += alpha * x[i]
@@ -133,21 +125,13 @@ end
 end
 
 @inline function axpy!(
-    dst::Array{T,D}, alpha::T, x::Array{T,D}, y::Array{T,D}, n::Int
+    dst::AbstractArray{T,D}, alpha::T,
+    x::AbstractArray{T,D}, y::AbstractArray{T,D}, n::Int
 ) where {T,D}
     @simd ivdep for i = 1:n
         @inbounds dst[i] = alpha * x[i] + y[i]
     end
     return dst
-end
-
-@inline function axpy_column!(
-    y::Array{T,D}, alpha::T, x::Matrix{T}, j::Int, n::Int
-) where {T,D}
-    @simd ivdep for i = 1:n
-        @inbounds y[i] += alpha * x[i, j]
-    end
-    return y
 end
 
 ##################################################################### INTERFACES

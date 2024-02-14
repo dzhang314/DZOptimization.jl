@@ -4,8 +4,7 @@ module DZOptimization
 include("ExampleFunctions.jl")
 include("PCG.jl")
 include("Kernels.jl")
-using .Kernels: dot, dot_column, norm2, inv_norm,
-    negate!, scale!, delta!, axpy!, axpy_column!
+using .Kernels: dot, norm2, inv_norm, negate!, scale!, delta!, axpy!
 
 
 ######################################################### OPTIMIZATION UTILITIES
@@ -648,11 +647,11 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Apply forward L-BFGS correction.
         for iter = hist_end:-1:hist_begin
             c = Base.srem_int(iter - 1, m) + 1
-            @inbounds alpha = opt._rho[c] * dot_column(
-                opt.next_step_direction, opt._delta_point_history, c, n)
+            @inbounds alpha = opt._rho[c] * dot(opt.next_step_direction,
+                view(opt._delta_point_history, :, c), n)
             @inbounds opt._alpha[c] = alpha
-            axpy_column!(opt.next_step_direction,
-                alpha, opt._delta_gradient_history, c, n)
+            axpy!(opt.next_step_direction,
+                alpha, view(opt._delta_gradient_history, :, c), n)
         end
 
         # Compute natural step size.
@@ -662,10 +661,11 @@ function step!(opt::LBFGSOptimizer{C,F,G,L,T,N}) where {C,F,G,L,T,N}
         # Apply backward L-BFGS correction.
         for iter = hist_begin:hist_end
             c = Base.srem_int(iter - 1, m) + 1
-            @inbounds beta = opt._alpha[c] - opt._rho[c] * dot_column(
-                opt.next_step_direction, opt._delta_gradient_history, c, n)
-            axpy_column!(opt.next_step_direction,
-                beta, opt._delta_point_history, c, n)
+            @inbounds beta = opt._alpha[c] - opt._rho[c] * dot(
+                opt.next_step_direction,
+                view(opt._delta_gradient_history, :, c), n)
+            axpy!(opt.next_step_direction,
+                beta, view(opt._delta_point_history, :, c), n)
         end
 
         # Verify that L-BFGS step direction is a descent direction.
