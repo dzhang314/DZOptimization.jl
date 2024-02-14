@@ -35,8 +35,12 @@ end
     return result_scalar + sum(result_vector)
 end
 
-@inline dot(v::Array{MultiFloat{T,N},D}, w::Array{MultiFloat{T,N},D}, n::Int
-) where {T,N,D} = dot_mfv(v, w, n, Val{8}())
+# TODO: How do we allow the user to specify the vector length?
+# For now, we default to vectors of length 8, since these are fastest on all
+# platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
+
+# TODO: Is there a way to vectorize dot products so that the result does not
+# depend on the vector length?
 
 @inline function dot_column(
     v::Array{T,D}, w::Matrix{T}, j::Int, n::Int
@@ -74,12 +78,6 @@ end
     end
     return result_scalar + sum(result_vector)
 end
-
-# TODO: How do we allow the user to specify the vector length?
-# For now, we default to vectors of length 8, since these are fastest on all
-# platforms I have tested (Intel 11900KF, AMD Ryzen 9 7950X3D, Apple M3 Pro).
-@inline norm2(x::Array{MultiFloat{T,N},D}, n::Int
-) where {T,N,D} = norm2_mfv(x, n, Val{8}())
 
 ####################################################################### NEGATION
 
