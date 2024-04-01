@@ -158,13 +158,13 @@ end
 
 ##################################################################### INTERFACES
 
-@inline norm2(x::Array{T,D}) where {T,D} = norm2(x, length(x))
+@inline norm2(x::AbstractArray{T,D}) where {T,D} = norm2(x, length(x))
 
-@inline inv_norm(x::Array{T,D}) where {T,D} = rsqrt(norm2(x))
+@inline inv_norm(x::AbstractArray{T,D}) where {T,D} = rsqrt(norm2(x))
 
-@inline negate!(x::Array{T,D}) where {T,D} = negate!(x, length(x))
+@inline negate!(x::AbstractArray{T,D}) where {T,D} = negate!(x, length(x))
 
-@inline scale!(x::Array{T,D}, alpha::T) where {T,D} =
+@inline scale!(x::AbstractArray{T,D}, alpha::T) where {T,D} =
     scale!(x, alpha, length(x))
 
 end # module Kernels
