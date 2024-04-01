@@ -134,7 +134,18 @@ end
     return dst
 end
 
-################################################################################
+##################################################################### INTERFACES
+
+@inline norm2(x::AbstractArray{T,D}) where {T,D} = norm2(x, length(x))
+
+@inline inv_norm(x::AbstractArray{T,D}) where {T,D} = rsqrt(norm2(x))
+
+@inline negate!(x::AbstractArray{T,D}) where {T,D} = negate!(x, length(x))
+
+@inline scale!(x::AbstractArray{T,D}, alpha::T) where {T,D} =
+    scale!(x, alpha, length(x))
+
+############################################################## ORTHOGONALIZATION
 
 function orthogonalize_columns!(A::Matrix{T}) where {T}
     n, m = size(A)
@@ -156,15 +167,66 @@ function orthogonalize_columns!(A::Matrix{T}) where {T}
     return A
 end
 
-##################################################################### INTERFACES
-
-@inline norm2(x::AbstractArray{T,D}) where {T,D} = norm2(x, length(x))
-
-@inline inv_norm(x::AbstractArray{T,D}) where {T,D} = rsqrt(norm2(x))
-
-@inline negate!(x::AbstractArray{T,D}) where {T,D} = negate!(x, length(x))
-
-@inline scale!(x::AbstractArray{T,D}, alpha::T) where {T,D} =
-    scale!(x, alpha, length(x))
+function stratified_orthogonal_basis!(matrices::Vector{Matrix{T}}) where {T}
+    _eps = eps(T)
+    _eps_1_2 = sqrt(_eps)
+    _eps_1_4 = sqrt(_eps_1_2)
+    _eps_1_8 = sqrt(_eps_1_4)
+    _eps_loose = _eps_1_4 * _eps_1_8    # 3/8ths of digits
+    _eps_strict = _eps_1_2 * _eps_loose # 7/8ths of digits
+    _eps_strict_sq = _eps_strict * _eps_strict
+    result = Tuple{Int,Int,Vector{T}}[]
+    for (i, matrix_i) in enumerate(matrices)
+        m, n = size(matrix_i)
+        if iszero(n)
+            continue
+        elseif isone(n)
+            squared_norm = norm2(view(matrix_i, :, 1))
+            if squared_norm < _eps_strict_sq
+                break
+            elseif squared_norm < _eps_loose
+                return nothing
+            else
+                column_one = matrix_i[:, 1]
+                push!(result, (i, 1, column_one))
+                for j = i:length(matrices)
+                    matrix_j = matrices[j]
+                    @assert m == size(matrix_j, 1)
+                    for k = 1:size(matrix_j, 2)
+                        column_k = view(matrix_j, :, k)
+                        overlap = dot(column_one, column_k, m)
+                        axpy!(column_k, -overlap / squared_norm, column_one, m)
+                    end
+                end
+                continue
+            end
+        end
+        while true
+            squared_norms = [(norm2(view(matrix_i, :, j)), j) for j = 1:n]
+            sort!(squared_norms) # TODO: don't need a full sort
+            max_squared_norm, max_index = squared_norms[end]
+            next_squared_norm, _ = squared_norms[end-1]
+            if max_squared_norm < _eps_strict_sq
+                break
+            elseif max_squared_norm < _eps_loose
+                return nothing
+            elseif max_squared_norm - next_squared_norm < _eps_loose
+                return nothing
+            end
+            column_max = matrix_i[:, max_index]
+            push!(result, (i, max_index, column_max))
+            for j = i:length(matrices)
+                matrix_j = matrices[j]
+                @assert m == size(matrix_j, 1)
+                for k = 1:size(matrix_j, 2)
+                    column_k = view(matrix_j, :, k)
+                    overlap = dot(column_max, column_k, m)
+                    axpy!(column_k, -overlap / max_squared_norm, column_max, m)
+                end
+            end
+        end
+    end
+    return result
+end
 
 end # module Kernels
