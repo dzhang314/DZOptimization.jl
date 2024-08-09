@@ -27,14 +27,26 @@ end
 
 
 function (lse::LineSearchEvaluator{C,F,T,N})(step_size::T) where {C,F,T,N}
+
+    # Validate array sizes.
     n = length(lse.initial_point)
     @assert n == length(lse.new_point)
     @assert n == length(lse.step_direction)
+
+    # Compute new point from initial point, step direction, and step size.
     axpy!(lse.new_point, step_size, lse.step_direction, lse.initial_point, n)
-    if !lse.constraint_function!(lse.new_point)
+
+    # Apply constraint function to project new point into feasible region.
+    is_feasible = lse.constraint_function!(lse.new_point)
+
+    # If projection fails, we return an objective value of positive infinity
+    # to indicate that the new point is infeasible.
+    if !is_feasible
         return typemax(T)
     end
+
     return lse.objective_function(lse.new_point)
+
 end
 
 
@@ -92,7 +104,7 @@ function find_three_point_bracket(
         end
     end
 
-    # Apply constraint function to check feasibility of new point.
+    # Apply constraint function to project new point into feasible region.
     is_feasible = lse.constraint_function!(lse.new_point)
 
     # Exit early if initial point is on the boundary of the feasible region.
@@ -106,6 +118,8 @@ function find_three_point_bracket(
 
         # If the new point is identical to the initial point after
         # applying constraints, then it must have been on the boundary.
+        # NOTE: We cannot use `point_changed` here because `lse.new_point`
+        # may have been modified by applying the constraint function.
         if lse.initial_point == lse.new_point
             return (_zero, f0, _zero, f0)
         end
@@ -127,6 +141,7 @@ function find_three_point_bracket(
 
         # A user may optionally specify a maximum number of times to increase
         # (double) the step size to prevent the search from straying too far.
+        # If `max_increases` is zero or negative, then no limit is imposed.
         num_increases = 0
 
         while true
@@ -147,9 +162,9 @@ function find_three_point_bracket(
 
         # If the new point is worse than the initial point, then we repeatedly
         # take smaller steps until we find a better feasible point.
-        half = inv(step_size + step_size)
+        _half = inv(_one + _one)
         while true
-            half_step_size = half * step_size
+            half_step_size = _half * step_size
             f2 = lse(half_step_size)
             if f2 <= f0
                 return (half_step_size, f2, step_size, f1)
