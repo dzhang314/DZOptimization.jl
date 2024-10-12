@@ -441,36 +441,41 @@ function search_for_counterexample_timed(
     duration_ns::UInt64,
 ) where {T}
     start = time_ns()
+    num_tries = zero(UInt64)
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
     end
-    return nothing
+    return (nothing, num_tries)
 end
 
 
@@ -481,36 +486,41 @@ function search_for_counterexample_timed(
     duration_ns::UInt64,
 ) where {T}
     start = time_ns()
+    num_tries = zero(UInt64)
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
-            return v
+            return (v, num_tries)
         end
     end
-    return nothing
+    return (nothing, num_tries)
 end
 
 
@@ -522,52 +532,57 @@ function search_for_counterexample_timed(
     terminate::Atomic{Bool},
 ) where {T}
     start = time_ns()
+    num_tries = zero(UInt64)
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
     end
-    return nothing
+    return (nothing, num_tries)
 end
 
 
@@ -579,52 +594,57 @@ function search_for_counterexample_timed(
     terminate::Atomic{Bool},
 ) where {T}
     start = time_ns()
+    num_tries = zero(UInt64)
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
+        num_tries += 1
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
         if !cond(w)
             terminate[] = true
-            return v
+            return (v, num_tries)
         end
         if terminate[]
-            return nothing
+            return (nothing, num_tries)
         end
     end
-    return nothing
+    return (nothing, num_tries)
 end
 
 
@@ -636,17 +656,21 @@ function parallel_search_for_counterexample_timed(
 ) where {T}
     N = nthreads()
     terminate = Atomic{Bool}(false)
-    results = Vector{Union{Nothing,Vector{T}}}(undef, N)
+    results = Vector{Tuple{Union{Nothing,Vector{T}},UInt64}}(undef, N)
     @threads for i = 1:N
         @inbounds results[i] = search_for_counterexample_timed(
             deepcopy(cond), network, deepcopy(gen), duration_ns, terminate)
     end
+    num_tries = zero(UInt64)
     @inbounds for i = 1:N
-        if !isnothing(results[i])
-            return results[i]
+        num_tries += results[i][2]
+    end
+    @inbounds for i = 1:N
+        if !isnothing(results[i][1])
+            return (results[i][1], num_tries)
         end
     end
-    return nothing
+    return (nothing, num_tries)
 end
 
 
