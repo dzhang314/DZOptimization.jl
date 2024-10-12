@@ -92,6 +92,7 @@ function apply_two_sum!(
     for (i, j) in network.comparators
         @inbounds x[i], x[j] = two_sum(x[i], x[j])
     end
+    return x
 end
 
 
@@ -111,66 +112,8 @@ function apply_two_sum_without!(
         @inbounds i, j = network.comparators[k]
         @inbounds x[i], x[j] = two_sum(x[i], x[j])
     end
+    return x
 end
-
-
-################################################################################
-
-
-export println_unicode
-
-
-const UNICODE_PADDING_CHARACTERS = Dict([
-    (Char(0x2502), Char(0x2502)) => Char(0x00A0),
-    (Char(0x2502), Char(0x255E)) => Char(0x00A0),
-    (Char(0x2561), Char(0x2502)) => Char(0x00A0),
-    (Char(0x2561), Char(0x255E)) => Char(0x00A0),
-    (Char(0x255E), Char(0x2561)) => Char(0x2550),
-    (Char(0x255E), Char(0x256A)) => Char(0x2550),
-    (Char(0x256A), Char(0x2561)) => Char(0x2550),
-    (Char(0x256A), Char(0x256A)) => Char(0x2550),
-])
-
-
-function println_padded_unicode(
-    io::IO,
-    line::AbstractVector{Char};
-    n::Integer=3,
-)
-    Base.require_one_based_indexing(line)
-    for i = 1:length(line)-1
-        @inbounds a, b = line[i], line[i+1]
-        padding = UNICODE_PADDING_CHARACTERS[(a, b)]
-        print(io, a)
-        for _ = Base.OneTo(n)
-            print(io, padding)
-        end
-    end
-    print(io, line[end], '\n')
-end
-
-
-function println_unicode(io::IO, network::SortingNetwork; n::Integer=3)
-    line = fill(Char(0x2502), network.num_inputs)
-    for (i, j) in network.comparators
-        if any(line[k] != Char(0x2502) for k = i:j)
-            println_padded_unicode(io, line; n)
-            fill!(line, Char(0x2502))
-        end
-        line[i] = Char(0x255E)
-        line[j] = Char(0x2561)
-        @simd ivdep for k = i+1:j-1
-            @inbounds line[k] = Char(0x256A)
-        end
-    end
-    if any(c != Char(0x2502) for c in line)
-        println_padded_unicode(io, line; n)
-    end
-end
-
-
-println_unicode(network::SortingNetwork; n::Integer=3) =
-    println_unicode(stdout, network; n)
 
 
 ################################################################################
@@ -183,6 +126,292 @@ abstract type AbstractSortingCondition <: AbstractCondition end
 
 
 abstract type AbstractTwoSumCondition <: AbstractCondition end
+
+
+################################################################################
+
+
+export passes_test, passes_all_tests
+
+
+function passes_test(
+    test_case::Vector{T},
+    cond::AbstractSortingCondition,
+    network::SortingNetwork,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    copyto!(v, test_case)
+    apply_sort!(v, network)
+    return cond(v)
+end
+
+
+function passes_test(
+    test_case::Vector{T},
+    cond::AbstractTwoSumCondition,
+    network::SortingNetwork,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    copyto!(v, test_case)
+    apply_two_sum!(v, network)
+    return cond(v)
+end
+
+
+function passes_all_tests(
+    test_cases::Set{Vector{T}},
+    cond::AbstractSortingCondition,
+    network::SortingNetwork,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    for test_case in test_cases
+        copyto!(v, test_case)
+        apply_sort!(v, network)
+        if !cond(v)
+            return false
+        end
+    end
+    return true
+end
+
+
+function passes_all_tests(
+    test_cases::Set{Vector{T}},
+    cond::AbstractTwoSumCondition,
+    network::SortingNetwork,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    for test_case in test_cases
+        copyto!(v, test_case)
+        apply_two_sum!(v, network)
+        if !cond(v)
+            return false
+        end
+    end
+    return true
+end
+
+
+function passes_all_tests_without(
+    test_cases::Set{Vector{T}},
+    cond::AbstractSortingCondition,
+    network::SortingNetwork,
+    index::Int,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    for test_case in test_cases
+        copyto!(v, test_case)
+        apply_sort_without!(v, network, index)
+        if !cond(v)
+            return false
+        end
+    end
+    return true
+end
+
+
+function passes_all_tests_without(
+    test_cases::Set{Vector{T}},
+    cond::AbstractTwoSumCondition,
+    network::SortingNetwork,
+    index::Int,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    for test_case in test_cases
+        copyto!(v, test_case)
+        apply_two_sum_without!(v, network, index)
+        if !cond(v)
+            return false
+        end
+    end
+    return true
+end
+
+
+################################################################################
+
+
+export generate_sorting_network, necessary_test_cases
+
+
+function generate_sorting_network(
+    test_cases::Set{Vector{T}},
+    cond::AbstractCondition,
+) where {T}
+
+    # Validate input data.
+    @assert !isempty(test_cases)
+    num_inputs = UInt8(length(first(test_cases)))
+    @assert all(length(test_case) == num_inputs for test_case in test_cases)
+
+    # Generate a random sorting network by adding random comparators
+    # until the network satisfies the given condition on every test case.
+    i_range = Base.OneTo(num_inputs)
+    j_range = Base.OneTo(num_inputs - one(UInt8))
+    network = SortingNetwork(num_inputs, Tuple{UInt8,UInt8}[])
+    while !passes_all_tests(test_cases, cond, network)
+        i = rand(i_range)
+        j = rand(j_range)
+        j += (j >= i)
+        i, j = branch_free_minmax(i, j)
+        push!(network.comparators, (i, j))
+    end
+
+    # Prune the network by removing unnecessary comparators.
+    while !isempty(network.comparators)
+        pruned = false
+        for index = 1:length(network.comparators)
+            if passes_all_tests_without(test_cases, cond, network, index)
+                deleteat!(network.comparators, index)
+                pruned = true
+                break
+            end
+        end
+        if !pruned
+            break
+        end
+    end
+
+    return network
+end
+
+
+function necessary_test_cases(
+    test_cases::Set{Vector{T}},
+    cond::AbstractCondition,
+    networks::Set{SortingNetwork},
+) where {T}
+
+    # Compute the set of networks that each test case invalidates.
+    invalidation_sets = Dict{Vector{T},Set{SortingNetwork}}()
+    for test_case in test_cases
+        invalidated = Set{SortingNetwork}()
+        for network in networks
+            if !passes_test(test_case, cond, network)
+                push!(invalidated, network)
+            end
+        end
+        invalidation_sets[test_case] = invalidated
+    end
+
+    # Greedily compute a set covering of the invalidated networks.
+    result = Set{Vector{Float64}}()
+    while !all(isempty, values(invalidation_sets))
+        _, best_test_case = findmax(length, invalidation_sets)
+        push!(result, best_test_case)
+        for other_test_case in test_cases
+            if other_test_case != best_test_case
+                setdiff!(invalidation_sets[other_test_case],
+                    invalidation_sets[best_test_case])
+            end
+        end
+        empty!(invalidation_sets[best_test_case])
+    end
+
+    return result
+end
+
+
+################################################################################
+
+
+abstract type AbstractTestGenerator{T} end
+
+
+abstract type AbstractSortingTestGenerator{T} <: AbstractTestGenerator{T} end
+
+
+abstract type AbstractTwoSumTestGenerator{T} <: AbstractTestGenerator{T} end
+
+
+################################################################################
+
+
+export search_for_counterexample, search_for_counterexample_timed
+
+
+function search_for_counterexample(
+    cond::AbstractSortingCondition,
+    network::SortingNetwork,
+    gen::AbstractSortingTestGenerator{T},
+    n::Integer,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    count = zero(n)
+    _one = one(n)
+    while count < n
+        gen(v)
+        apply_sort!(v, network)
+        if !cond(v)
+            return v
+        end
+        count += _one
+    end
+    return nothing
+end
+
+
+function search_for_counterexample(
+    cond::AbstractTwoSumCondition,
+    network::SortingNetwork,
+    gen::AbstractTwoSumTestGenerator{T},
+    n::Integer,
+) where {T}
+    v = Vector{T}(undef, network.num_inputs)
+    count = zero(n)
+    _one = one(n)
+    while count < n
+        gen(v)
+        apply_two_sum!(v, network)
+        if !cond(v)
+            return v
+        end
+        count += _one
+    end
+    return nothing
+end
+
+
+function search_for_counterexample_timed(
+    cond::AbstractSortingCondition,
+    network::SortingNetwork,
+    gen::AbstractSortingTestGenerator{T},
+    duration_ns::UInt64,
+) where {T}
+    start = time_ns()
+    stop = start + duration_ns
+    v = Vector{T}(undef, network.num_inputs)
+    while time_ns() < stop
+        gen(v)
+        apply_sort!(v, network)
+        if !cond(v)
+            return v
+        end
+    end
+    return nothing
+end
+
+
+function search_for_counterexample_timed(
+    cond::AbstractTwoSumCondition,
+    network::SortingNetwork,
+    gen::AbstractTwoSumTestGenerator{T},
+    duration_ns::UInt64,
+) where {T}
+    start = time_ns()
+    stop = start + duration_ns
+    v = Vector{T}(undef, network.num_inputs)
+    w = Vector{T}(undef, network.num_inputs)
+    while time_ns() < stop
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            return v
+        end
+    end
+    return nothing
+end
 
 
 ################################################################################
@@ -288,227 +517,6 @@ function (cond::StronglyNormalizedCondition)(x::AbstractVector)
         end
     end
     return true
-end
-
-
-################################################################################
-
-
-function satisfies(
-    network::SortingNetwork,
-    cond::AbstractSortingCondition,
-    test_set::Set{Vector{T}},
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    for test_case in test_set
-        copyto!(v, test_case)
-        apply_sort!(v, network)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function satisfies(
-    network::SortingNetwork,
-    cond::AbstractTwoSumCondition,
-    test_set::Set{Vector{T}},
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    for test_case in test_set
-        copyto!(v, test_case)
-        apply_two_sum!(v, network)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function satisfies_without(
-    network::SortingNetwork,
-    cond::AbstractSortingCondition,
-    test_set::Set{Vector{T}},
-    index::Int,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    for test_case in test_set
-        copyto!(v, test_case)
-        apply_sort_without!(v, network, index)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function satisfies_without(
-    network::SortingNetwork,
-    cond::AbstractTwoSumCondition,
-    test_set::Set{Vector{T}},
-    index::Int,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    for test_case in test_set
-        copyto!(v, test_case)
-        apply_two_sum_without!(v, network, index)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-################################################################################
-
-
-export generate_sorting_network
-
-
-function generate_sorting_network(
-    cond::AbstractCondition,
-    test_set::Set{Vector{T}},
-) where {T}
-
-    # Validate input data.
-    @assert !isempty(test_set)
-    num_inputs = UInt8(length(first(test_set)))
-    @assert all(length(test_case) == num_inputs for test_case in test_set)
-
-    # Generate a random sorting network by adding random comparators
-    # until the network satisfies the given condition on the test set.
-    i_range = Base.OneTo(num_inputs)
-    j_range = Base.OneTo(num_inputs - one(UInt8))
-    network = SortingNetwork(num_inputs, Tuple{UInt8,UInt8}[])
-    while !satisfies(network, cond, test_set)
-        i = rand(i_range)
-        j = rand(j_range)
-        j += (j >= i)
-        i, j = branch_free_minmax(i, j)
-        push!(network.comparators, (i, j))
-    end
-
-    # Prune the network by removing unnecessary comparators.
-    while !isempty(network.comparators)
-        pruned = false
-        for index = 1:length(network.comparators)
-            if satisfies_without(network, cond, test_set, index)
-                deleteat!(network.comparators, index)
-                pruned = true
-                break
-            end
-        end
-        if !pruned
-            break
-        end
-    end
-
-    return network
-end
-
-
-################################################################################
-
-
-abstract type AbstractTestGenerator{T} end
-
-
-abstract type AbstractSortingTestGenerator{T} <: AbstractTestGenerator{T} end
-
-
-abstract type AbstractTwoSumTestGenerator{T} <: AbstractTestGenerator{T} end
-
-
-################################################################################
-
-
-export search_for_counterexample, search_for_counterexample_timed
-
-
-function search_for_counterexample(
-    network::SortingNetwork,
-    cond::AbstractSortingCondition,
-    gen::AbstractSortingTestGenerator{T},
-    n::Integer,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    count = zero(n)
-    _one = one(n)
-    while count < n
-        gen(v)
-        apply_sort!(v, network)
-        if !cond(v)
-            return v
-        end
-        count += _one
-    end
-    return nothing
-end
-
-
-function search_for_counterexample(
-    network::SortingNetwork,
-    cond::AbstractTwoSumCondition,
-    gen::AbstractTwoSumTestGenerator{T},
-    n::Integer,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    count = zero(n)
-    _one = one(n)
-    while count < n
-        gen(v)
-        apply_two_sum!(v, network)
-        if !cond(v)
-            return v
-        end
-        count += _one
-    end
-    return nothing
-end
-
-
-function search_for_counterexample_timed(
-    network::SortingNetwork,
-    cond::AbstractSortingCondition,
-    gen::AbstractSortingTestGenerator{T},
-    duration_ns::UInt64,
-) where {T}
-    start = time_ns()
-    stop = start + duration_ns
-    v = Vector{T}(undef, network.num_inputs)
-    while time_ns() < stop
-        gen(v)
-        apply_sort!(v, network)
-        if !cond(v)
-            return v
-        end
-    end
-    return nothing
-end
-
-
-function search_for_counterexample_timed(
-    network::SortingNetwork,
-    cond::AbstractTwoSumCondition,
-    gen::AbstractTwoSumTestGenerator{T},
-    duration_ns::UInt64,
-) where {T}
-    start = time_ns()
-    stop = start + duration_ns
-    v = Vector{T}(undef, network.num_inputs)
-    while time_ns() < stop
-        gen(v)
-        apply_two_sum!(v, network)
-        if !cond(v)
-            return v
-        end
-    end
-    return nothing
 end
 
 
@@ -642,6 +650,65 @@ function (gen::MultiFloatTestGenerator)(v::AbstractVector{T}) where {T}
     riffle!(v, gen.x, gen.y)
     return v
 end
+
+
+################################################################################
+
+
+export println_unicode
+
+
+const UNICODE_PADDING_CHARACTERS = Dict([
+    (Char(0x2502), Char(0x2502)) => Char(0x00A0),
+    (Char(0x2502), Char(0x255E)) => Char(0x00A0),
+    (Char(0x2561), Char(0x2502)) => Char(0x00A0),
+    (Char(0x2561), Char(0x255E)) => Char(0x00A0),
+    (Char(0x255E), Char(0x2561)) => Char(0x2550),
+    (Char(0x255E), Char(0x256A)) => Char(0x2550),
+    (Char(0x256A), Char(0x2561)) => Char(0x2550),
+    (Char(0x256A), Char(0x256A)) => Char(0x2550),
+])
+
+
+function println_padded_unicode(
+    io::IO,
+    line::AbstractVector{Char};
+    n::Integer=3,
+)
+    Base.require_one_based_indexing(line)
+    for i = 1:length(line)-1
+        @inbounds a, b = line[i], line[i+1]
+        padding = UNICODE_PADDING_CHARACTERS[(a, b)]
+        print(io, a)
+        for _ = Base.OneTo(n)
+            print(io, padding)
+        end
+    end
+    print(io, line[end], '\n')
+end
+
+
+function println_unicode(io::IO, network::SortingNetwork; n::Integer=3)
+    line = fill(Char(0x2502), network.num_inputs)
+    for (i, j) in network.comparators
+        if any(line[k] != Char(0x2502) for k = i:j)
+            println_padded_unicode(io, line; n)
+            fill!(line, Char(0x2502))
+        end
+        line[i] = Char(0x255E)
+        line[j] = Char(0x2561)
+        @simd ivdep for k = i+1:j-1
+            @inbounds line[k] = Char(0x256A)
+        end
+    end
+    if any(c != Char(0x2502) for c in line)
+        println_padded_unicode(io, line; n)
+    end
+end
+
+
+println_unicode(network::SortingNetwork; n::Integer=3) =
+    println_unicode(stdout, network; n)
 
 
 ################################################################################
