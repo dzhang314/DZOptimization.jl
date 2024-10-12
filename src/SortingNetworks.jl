@@ -4,7 +4,7 @@ module SortingNetworks
 using Base.Threads: Atomic, nthreads, @threads
 
 
-################################################################################
+################################################# SORTING NETWORK DATA STRUCTURE
 
 
 export SortingNetwork, apply_sort!, apply_two_sum!, canonize!
@@ -36,6 +36,9 @@ end
     (a.num_inputs == b.num_inputs) && (a.comparators == b.comparators)
 @inline Base.hash(network::SortingNetwork, h::UInt) =
     hash(network.comparators, hash(network.num_inputs, h))
+
+
+###################################################### SORTING NETWORK EXECUTION
 
 
 @inline branch_free_minmax(x::T, y::T) where {T} =
@@ -119,6 +122,9 @@ function apply_two_sum_without!(
 end
 
 
+################################################### SORTING NETWORK CANONIZATION
+
+
 function canonize!(network::SortingNetwork)
     Base.require_one_based_indexing(network.comparators)
     for i = 1:length(network.comparators)
@@ -145,7 +151,10 @@ function canonize!(network::SortingNetwork)
 end
 
 
-################################################################################
+######################################################## SORTING NETWORK TESTING
+
+
+export passes_test, passes_all_tests
 
 
 abstract type AbstractCondition end
@@ -155,12 +164,6 @@ abstract type AbstractSortingCondition <: AbstractCondition end
 
 
 abstract type AbstractTwoSumCondition <: AbstractCondition end
-
-
-################################################################################
-
-
-export passes_test, passes_all_tests
 
 
 function passes_test(
@@ -257,7 +260,7 @@ function passes_all_tests_without(
 end
 
 
-################################################################################
+##################################################### SORTING NETWORK GENERATION
 
 
 export generate_sorting_network, necessary_test_cases
@@ -306,6 +309,9 @@ function generate_sorting_network(
 end
 
 
+############################################################ TEST CASE SELECTION
+
+
 function necessary_test_cases(
     test_cases::Set{Vector{T}},
     cond::AbstractCondition,
@@ -342,7 +348,11 @@ function necessary_test_cases(
 end
 
 
-################################################################################
+########################################################### TEST CASE GENERATION
+
+
+export search_for_counterexample, search_for_counterexample_timed,
+    parallel_search_for_counterexample_timed
 
 
 abstract type AbstractTestGenerator{T} end
@@ -352,13 +362,6 @@ abstract type AbstractSortingTestGenerator{T} <: AbstractTestGenerator{T} end
 
 
 abstract type AbstractTwoSumTestGenerator{T} <: AbstractTestGenerator{T} end
-
-
-################################################################################
-
-
-export search_for_counterexample, search_for_counterexample_timed,
-    parallel_search_for_counterexample_timed
 
 
 function search_for_counterexample(
@@ -623,7 +626,7 @@ function parallel_search_for_counterexample_timed(
 end
 
 
-################################################################################
+######################################################### TEST CONDITION: SORTED
 
 
 export SortedCondition
@@ -635,7 +638,7 @@ struct SortedCondition <: AbstractSortingCondition end
 @inline (cond::SortedCondition)(x::AbstractVector) = issorted(x)
 
 
-################################################################################
+############################################## TEST CONDITION: WEAKLY NORMALIZED
 
 
 export WeaklyNormalizedCondition
@@ -693,7 +696,7 @@ function (cond::WeaklyNormalizedCondition)(x::AbstractVector{T}) where {T}
 end
 
 
-################################################################################
+############################################ TEST CONDITION: STRONGLY NORMALIZED
 
 
 export StronglyNormalizedCondition
@@ -729,7 +732,7 @@ function (cond::StronglyNormalizedCondition)(x::AbstractVector)
 end
 
 
-################################################################################
+############################################### TEST CASE GENERATOR: MULTIFLOATS
 
 
 export MultiFloatTestGenerator
@@ -860,7 +863,7 @@ function (gen::MultiFloatTestGenerator)(v::AbstractVector{T}) where {T}
 end
 
 
-################################################################################
+################################################## SORTING NETWORK VISUALIZATION
 
 
 export println_unicode
@@ -917,9 +920,6 @@ end
 
 println_unicode(network::SortingNetwork; n::Integer=3) =
     println_unicode(stdout, network; n)
-
-
-################################################################################
 
 
 end # module SortingNetworks
