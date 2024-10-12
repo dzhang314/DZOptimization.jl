@@ -1,6 +1,9 @@
 module SortingNetworks
 
 
+using Base.Threads: Atomic, nthreads, @threads
+
+
 ################################################################################
 
 
@@ -354,7 +357,8 @@ abstract type AbstractTwoSumTestGenerator{T} <: AbstractTestGenerator{T} end
 ################################################################################
 
 
-export search_for_counterexample, search_for_counterexample_timed
+export search_for_counterexample, search_for_counterexample_timed,
+    parallel_search_for_counterexample_timed
 
 
 function search_for_counterexample(
@@ -477,6 +481,143 @@ function search_for_counterexample_timed(
         apply_two_sum!(w, network)
         if !cond(w)
             return v
+        end
+    end
+    return nothing
+end
+
+
+function search_for_counterexample_timed(
+    cond::AbstractSortingCondition,
+    network::SortingNetwork,
+    gen::AbstractSortingTestGenerator{T},
+    duration_ns::UInt64,
+    terminate::Atomic{Bool},
+) where {T}
+    start = time_ns()
+    v = Vector{T}(undef, network.num_inputs)
+    w = Vector{T}(undef, network.num_inputs)
+    # This loop is manually unrolled to reduce the overhead of time_ns().
+    while time_ns() - start < duration_ns
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+    end
+    return nothing
+end
+
+
+function search_for_counterexample_timed(
+    cond::AbstractTwoSumCondition,
+    network::SortingNetwork,
+    gen::AbstractTwoSumTestGenerator{T},
+    duration_ns::UInt64,
+    terminate::Atomic{Bool},
+) where {T}
+    start = time_ns()
+    v = Vector{T}(undef, network.num_inputs)
+    w = Vector{T}(undef, network.num_inputs)
+    # This loop is manually unrolled to reduce the overhead of time_ns().
+    while time_ns() - start < duration_ns
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            terminate[] = true
+            return v
+        end
+        if terminate[]
+            return nothing
+        end
+    end
+    return nothing
+end
+
+
+function parallel_search_for_counterexample_timed(
+    cond::AbstractCondition,
+    network::SortingNetwork,
+    gen::AbstractTestGenerator{T},
+    duration_ns::UInt64,
+) where {T}
+    N = nthreads()
+    terminate = Atomic{Bool}(false)
+    results = Vector{Union{Nothing,Vector{T}}}(undef, N)
+    @threads for i = 1:N
+        @inbounds results[i] = search_for_counterexample_timed(
+            cond, network, gen, duration_ns, terminate)
+    end
+    @inbounds for i = 1:N
+        if !isnothing(results[i])
+            @show results[i]
+            return results[i]
         end
     end
     return nothing
