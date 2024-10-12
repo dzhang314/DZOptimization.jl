@@ -612,7 +612,7 @@ function parallel_search_for_counterexample_timed(
     results = Vector{Union{Nothing,Vector{T}}}(undef, N)
     @threads for i = 1:N
         @inbounds results[i] = search_for_counterexample_timed(
-            cond, network, gen, duration_ns, terminate)
+            deepcopy(cond), network, deepcopy(gen), duration_ns, terminate)
     end
     @inbounds for i = 1:N
         if !isnothing(results[i])
@@ -829,8 +829,7 @@ function riffle!(
     @assert length(v) == len_x + len_y
 
     # Riffle common elements.
-    min_len = min(len_x, len_y)
-    @simd ivdep for i = 1:min_len
+    @simd ivdep for i = 1:min(len_x, len_y)
         _2i = i + i
         @inbounds v[_2i-1] = x[i]
         @inbounds v[_2i] = y[i]
