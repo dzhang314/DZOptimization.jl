@@ -7,7 +7,7 @@ using Base.Threads: Atomic, nthreads, @threads
 ################################################# SORTING NETWORK DATA STRUCTURE
 
 
-export SortingNetwork, apply_sort!, apply_two_sum!, canonize!
+export SortingNetwork
 
 
 struct SortingNetwork
@@ -39,6 +39,9 @@ end
 
 
 ###################################################### SORTING NETWORK EXECUTION
+
+
+export apply_sort!, apply_two_sum!
 
 
 @inline branch_free_minmax(x::T, y::T) where {T} =
@@ -125,6 +128,9 @@ end
 ################################################### SORTING NETWORK CANONIZATION
 
 
+export canonize!
+
+
 function canonize!(network::SortingNetwork)
     Base.require_one_based_indexing(network.comparators)
     for i = 1:length(network.comparators)
@@ -154,7 +160,7 @@ end
 ######################################################## SORTING NETWORK TESTING
 
 
-export passes_test, passes_all_tests
+export passes_test, passes_all_tests, passes_all_tests_without
 
 
 abstract type AbstractCondition end
@@ -263,7 +269,7 @@ end
 ##################################################### SORTING NETWORK GENERATION
 
 
-export generate_sorting_network, necessary_test_cases
+export generate_sorting_network
 
 
 function generate_sorting_network(
@@ -310,6 +316,9 @@ end
 
 
 ############################################################ TEST CASE SELECTION
+
+
+export necessary_test_cases
 
 
 function necessary_test_cases(
