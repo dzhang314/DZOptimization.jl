@@ -29,6 +29,10 @@ end
 
 
 @inline Base.length(network::SortingNetwork) = length(network.comparators)
+@inline Base.:(==)(a::SortingNetwork, b::SortingNetwork) =
+    (a.num_inputs == b.num_inputs) && (a.comparators == b.comparators)
+@inline Base.hash(network::SortingNetwork, h::UInt) =
+    hash(network.comparators, hash(network.num_inputs, h))
 
 
 @inline branch_free_minmax(x::T, y::T) where {T} =
