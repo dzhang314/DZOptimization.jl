@@ -1,6 +1,11 @@
 module DZOptimization
 
 
+include("SortingNetworks.jl")
+
+
+#=
+
 include("ExampleFunctions.jl")
 include("PCG.jl")
 include("Kernels.jl")
@@ -1144,6 +1149,9 @@ function find_saturation_threshold(data::Vector{Tuple{T,T}}) where {T}
     end
     return (best_threshold, best_slope, best_mean, best_loss)
 end
+
+=#
+
 
 =#
 
