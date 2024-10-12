@@ -616,7 +616,6 @@ function parallel_search_for_counterexample_timed(
     end
     @inbounds for i = 1:N
         if !isnothing(results[i])
-            @show results[i]
             return results[i]
         end
     end
