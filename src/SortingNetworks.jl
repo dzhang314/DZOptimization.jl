@@ -410,11 +410,10 @@ function search_for_counterexample_timed(
     duration_ns::UInt64,
 ) where {T}
     start = time_ns()
-    stop = start + duration_ns
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
     # This loop is manually unrolled to reduce the overhead of time_ns().
-    while time_ns() < stop
+    while time_ns() - start < duration_ns
         gen(v)
         copy!(w, v)
         apply_sort!(w, network)
@@ -451,11 +450,10 @@ function search_for_counterexample_timed(
     duration_ns::UInt64,
 ) where {T}
     start = time_ns()
-    stop = start + duration_ns
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
     # This loop is manually unrolled to reduce the overhead of time_ns().
-    while time_ns() < stop
+    while time_ns() - start < duration_ns
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
