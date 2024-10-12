@@ -364,12 +364,14 @@ function search_for_counterexample(
     n::Integer,
 ) where {T}
     v = Vector{T}(undef, network.num_inputs)
+    w = Vector{T}(undef, network.num_inputs)
     count = zero(n)
     _one = one(n)
     while count < n
         gen(v)
-        apply_sort!(v, network)
-        if !cond(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
             return v
         end
         count += _one
@@ -385,12 +387,14 @@ function search_for_counterexample(
     n::Integer,
 ) where {T}
     v = Vector{T}(undef, network.num_inputs)
+    w = Vector{T}(undef, network.num_inputs)
     count = zero(n)
     _one = one(n)
     while count < n
         gen(v)
-        apply_two_sum!(v, network)
-        if !cond(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
             return v
         end
         count += _one
@@ -408,10 +412,31 @@ function search_for_counterexample_timed(
     start = time_ns()
     stop = start + duration_ns
     v = Vector{T}(undef, network.num_inputs)
+    w = Vector{T}(undef, network.num_inputs)
+    # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() < stop
         gen(v)
-        apply_sort!(v, network)
-        if !cond(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            return v
+        end
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            return v
+        end
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
+            return v
+        end
+        gen(v)
+        copy!(w, v)
+        apply_sort!(w, network)
+        if !cond(w)
             return v
         end
     end
@@ -429,7 +454,26 @@ function search_for_counterexample_timed(
     stop = start + duration_ns
     v = Vector{T}(undef, network.num_inputs)
     w = Vector{T}(undef, network.num_inputs)
+    # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() < stop
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            return v
+        end
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            return v
+        end
+        gen(v)
+        copy!(w, v)
+        apply_two_sum!(w, network)
+        if !cond(w)
+            return v
+        end
         gen(v)
         copy!(w, v)
         apply_two_sum!(w, network)
