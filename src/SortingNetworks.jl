@@ -7,7 +7,7 @@ using Base.Threads: Atomic, nthreads, @threads
 ################################################# SORTING NETWORK DATA STRUCTURE
 
 
-export SortingNetwork
+export SortingNetwork, depth
 
 
 struct SortingNetwork
@@ -23,8 +23,7 @@ struct SortingNetwork
         _zero = zero(UInt8)
         _num_inputs = UInt8(num_inputs)
         for (a, b) in comparators
-            @assert _zero < a <= _num_inputs
-            @assert _zero < b <= _num_inputs
+            @assert _zero < a < b <= _num_inputs
         end
         return new(Int(num_inputs), comparators)
     end
@@ -36,6 +35,26 @@ end
     (a.num_inputs == b.num_inputs) && (a.comparators == b.comparators)
 @inline Base.hash(network::SortingNetwork, h::UInt) =
     hash(network.comparators, hash(network.num_inputs, h))
+
+
+function depth(network::SortingNetwork)
+    Base.require_one_based_indexing(network.comparators)
+    if isempty(network.comparators)
+        return 0
+    else
+        result = 1
+        for i = 1:length(network.comparators)-1
+            @inbounds (a, b) = network.comparators[i]
+            @inbounds (c, d) = network.comparators[i+1]
+            @assert a < b
+            @assert c < d
+            if (a == c) | (a == d) | (b == c) | (b == d)
+                result += 1
+            end
+        end
+        return result
+    end
+end
 
 
 ###################################################### SORTING NETWORK EXECUTION
@@ -133,17 +152,13 @@ export canonize!
 
 function canonize!(network::SortingNetwork)
     Base.require_one_based_indexing(network.comparators)
-    for i = 1:length(network.comparators)
-        @inbounds (a, b) = network.comparators[i]
-        if a > b
-            @inbounds network.comparators[i] = (b, a)
-        end
-    end
     while true
         changed = false
         for i = 1:length(network.comparators)-1
             @inbounds (a, b) = network.comparators[i]
             @inbounds (c, d) = network.comparators[i+1]
+            @assert a < b
+            @assert c < d
             if (a != c) & (a != d) & (b != c) & (b != d) & ((a, b) > (c, d))
                 @inbounds network.comparators[i] = (c, d)
                 @inbounds network.comparators[i+1] = (a, b)
@@ -911,6 +926,7 @@ end
 function println_unicode(io::IO, network::SortingNetwork; n::Integer=3)
     line = fill(Char(0x2502), network.num_inputs)
     for (i, j) in network.comparators
+        @assert i < j
         if any(line[k] != Char(0x2502) for k = i:j)
             println_padded_unicode(io, line; n)
             fill!(line, Char(0x2502))
