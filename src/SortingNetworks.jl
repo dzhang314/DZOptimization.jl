@@ -4,7 +4,7 @@ module SortingNetworks
 ################################################################################
 
 
-export SortingNetwork, apply_sort!, apply_two_sum!
+export SortingNetwork, apply_sort!, apply_two_sum!, canonize!
 
 
 struct SortingNetwork
@@ -113,6 +113,32 @@ function apply_two_sum_without!(
         @inbounds x[i], x[j] = two_sum(x[i], x[j])
     end
     return x
+end
+
+
+function canonize!(network::SortingNetwork)
+    Base.require_one_based_indexing(network.comparators)
+    for i = 1:length(network.comparators)
+        @inbounds (a, b) = network.comparators[i]
+        if a > b
+            @inbounds network.comparators[i] = (b, a)
+        end
+    end
+    while true
+        changed = false
+        for i = 1:length(network.comparators)-1
+            @inbounds (a, b) = network.comparators[i]
+            @inbounds (c, d) = network.comparators[i+1]
+            if (a != c) & (a != d) & (b != c) & (b != d) & ((a, b) > (c, d))
+                @inbounds network.comparators[i] = (c, d)
+                @inbounds network.comparators[i+1] = (a, b)
+                changed = true
+            end
+        end
+        if !changed
+            return network
+        end
+    end
 end
 
 
@@ -272,6 +298,7 @@ function generate_sorting_network(
         end
     end
 
+    canonize!(network)
     return network
 end
 
