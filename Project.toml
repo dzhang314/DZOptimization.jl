@@ -1,11 +1,7 @@
 name = "DZOptimization"
 uuid = "7e4c8b08-07ea-4d35-9260-462b5bfff2a0"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
-version = "0.5.1"
-
-[deps]
-MultiFloats = "bdf0d083-296b-4888-a5b6-7498122e68a5"
-SIMD = "fdea26ae-647d-5447-a871-4b548cad5224"
+version = "0.6.0"
 
 [compat]
 julia = "1"
