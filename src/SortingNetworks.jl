@@ -503,7 +503,7 @@ end
 # end
 
 
-########################################################### TEST CASE GENERATION
+########################################################## COUNTEREXAMPLE SEARCH
 
 
 export find_counterexample
@@ -583,25 +583,28 @@ function find_counterexample(
     cond::AbstractCondition{N},
     network::SortingNetwork{N},
     duration_ns::UInt64,
+    num_threads::Int=nthreads(),
 ) where {N,T}
-    p = nthreads()
+    @assert num_threads >= 1
     terminate = Atomic{Bool}(false)
-    tasks = Vector{Task}(undef, p - 1)
     compiled_network = _compile_helper(gen, cond, network)
-    for i = 1:p-1
-        tasks[i] = @spawn invokelatest(_find_counterexample_worker_thread,
-            $(deepcopy(gen)), $(deepcopy(cond)), $compiled_network, $terminate)
-    end
-    results = [invokelatest(_find_counterexample_main_thread,
-        gen, cond, compiled_network, terminate, duration_ns)]
+    tasks = Task[
+        @spawn invokelatest(_find_counterexample_worker_thread,
+            $(deepcopy(gen)), $(deepcopy(cond)), $compiled_network, $terminate
+        )::Tuple{Union{Nothing,NTuple{N,T}},UInt64}
+        for _ = 1:num_threads-1]
+    results = Tuple{Union{Nothing,NTuple{N,T}},UInt64}[]
+    push!(results, invokelatest(_find_counterexample_main_thread,
+        gen, cond, compiled_network, terminate, duration_ns
+    )::Tuple{Union{Nothing,NTuple{N,T}},UInt64})
     for task in tasks
-        push!(results, fetch(task))
+        push!(results, fetch(task)::Tuple{Union{Nothing,NTuple{N,T}},UInt64})
     end
     num_tries = zero(UInt64)
-    for i = 1:p
+    for i = 1:num_threads
         num_tries += results[i][2]
     end
-    for i = 1:p
+    for i = 1:num_threads
         if !isnothing(results[i][1])
             return (results[i][1], num_tries)
         end
