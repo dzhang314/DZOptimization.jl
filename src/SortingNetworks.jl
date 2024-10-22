@@ -33,7 +33,7 @@ end
 @inline Base.:(==)(a::SortingNetwork{N}, b::SortingNetwork{N}) where {N} =
     a.comparators == b.comparators
 @inline Base.hash(network::SortingNetwork{N}, h::UInt) where {N} =
-    hash(N, hash(network.comparators, h))
+    hash(network.comparators, h)
 
 
 # function depth(network::SortingNetwork{N}) where {N}
