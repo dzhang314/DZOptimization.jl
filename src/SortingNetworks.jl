@@ -7,158 +7,63 @@ using Base.Threads: Atomic, nthreads, @threads
 ################################################# SORTING NETWORK DATA STRUCTURE
 
 
-export SortingNetwork, depth
+export SortingNetwork, canonize!
 
 
-struct SortingNetwork
-    num_inputs::Int
+struct SortingNetwork{N}
     comparators::Vector{Tuple{UInt8,UInt8}}
 
-    function SortingNetwork(
-        num_inputs::Integer,
+    function SortingNetwork{N}(
         comparators::Vector{Tuple{UInt8,UInt8}},
-    )
-        @assert !signbit(num_inputs)
-        @assert num_inputs <= typemax(UInt8)
+    ) where {N}
+        @assert !signbit(N)
+        @assert N <= typemax(UInt8)
         _zero = zero(UInt8)
-        _num_inputs = UInt8(num_inputs)
+        _num_inputs = UInt8(N)
         for (a, b) in comparators
             @assert _zero < a < b <= _num_inputs
         end
-        return new(Int(num_inputs), comparators)
+        return new{N}(comparators)
     end
 end
 
 
-@inline Base.length(network::SortingNetwork) = length(network.comparators)
-@inline Base.:(==)(a::SortingNetwork, b::SortingNetwork) =
-    (a.num_inputs == b.num_inputs) && (a.comparators == b.comparators)
-@inline Base.hash(network::SortingNetwork, h::UInt) =
-    hash(network.comparators, hash(network.num_inputs, h))
+@inline Base.length(network::SortingNetwork{N}) where {N} =
+    length(network.comparators)
+@inline Base.:(==)(a::SortingNetwork{N}, b::SortingNetwork{N}) where {N} =
+    a.comparators == b.comparators
+@inline Base.hash(network::SortingNetwork{N}, h::UInt) where {N} =
+    hash(N, hash(network.comparators, h))
 
 
-function depth(network::SortingNetwork)
-    Base.require_one_based_indexing(network.comparators)
-    if isempty(network.comparators)
-        return 0
-    else
-        result = 1
-        for i = 1:length(network.comparators)-1
-            @inbounds (a, b) = network.comparators[i]
-            @inbounds (c, d) = network.comparators[i+1]
-            @assert a < b
-            @assert c < d
-            if (a == c) | (a == d) | (b == c) | (b == d)
-                result += 1
-            end
-        end
-        return result
-    end
-end
+# function depth(network::SortingNetwork{N}) where {N}
+#     Base.require_one_based_indexing(network.comparators)
+#     if isempty(network.comparators)
+#         return 0
+#     else
+#         result = 1
+#         for i = 1:length(network.comparators)-1
+#             @inbounds (a, b) = network.comparators[i]
+#             @inbounds (c, d) = network.comparators[i+1]
+#             @assert a < b
+#             @assert c < d
+#             if (a == c) | (a == d) | (b == c) | (b == d)
+#                 result += 1
+#             end
+#         end
+#         return result
+#     end
+# end
 
 
-###################################################### SORTING NETWORK EXECUTION
-
-
-export apply_sort!, apply_two_sum!
-
-
-@inline branch_free_minmax(x::T, y::T) where {T} =
-    ifelse(x > y, (y, x), (x, y))
-
-
-function apply_sort!(
-    x::AbstractVector,
-    network::SortingNetwork,
-)
-    Base.require_one_based_indexing(x)
-    @assert length(x) == network.num_inputs
-    for (i, j) in network.comparators
-        @inbounds x[i], x[j] = branch_free_minmax(x[i], x[j])
-    end
-    return x
-end
-
-
-function apply_sort_without!(
-    x::AbstractVector,
-    network::SortingNetwork,
-    index::Int,
-)
-    Base.require_one_based_indexing(x)
-    @assert length(x) == network.num_inputs
-    @assert 1 <= index <= length(network.comparators)
-    for k = 1:index-1
-        @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = branch_free_minmax(x[i], x[j])
-    end
-    for k = index+1:length(network.comparators)
-        @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = branch_free_minmax(x[i], x[j])
-    end
-    return x
-end
-
-
-@inline function two_sum(a::T, b::T) where {T}
-    s = a + b
-    a_prime = s - b
-    b_prime = s - a_prime
-    err_a = a - a_prime
-    err_b = b - b_prime
-    e = err_a + err_b
-    return (s, e)
-end
-
-
-function apply_two_sum!(
-    x::AbstractVector,
-    network::SortingNetwork,
-)
-    Base.require_one_based_indexing(x)
-    @assert length(x) == network.num_inputs
-    for (i, j) in network.comparators
-        @inbounds x[i], x[j] = two_sum(x[i], x[j])
-    end
-    return x
-end
-
-
-function apply_two_sum_without!(
-    x::AbstractVector,
-    network::SortingNetwork,
-    index::Int,
-)
-    Base.require_one_based_indexing(x)
-    @assert length(x) == network.num_inputs
-    @assert 1 <= index <= length(network.comparators)
-    for k = 1:index-1
-        @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = two_sum(x[i], x[j])
-    end
-    for k = index+1:length(network.comparators)
-        @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = two_sum(x[i], x[j])
-    end
-    return x
-end
-
-
-################################################### SORTING NETWORK CANONIZATION
-
-
-export canonize!
-
-
-function canonize!(network::SortingNetwork)
+function canonize!(network::SortingNetwork{N}) where {N}
     Base.require_one_based_indexing(network.comparators)
     while true
         changed = false
         for i = 1:length(network.comparators)-1
             @inbounds (a, b) = network.comparators[i]
             @inbounds (c, d) = network.comparators[i+1]
-            @assert a < b
-            @assert c < d
+            @assert (a < b) & (c < d)
             if (a != c) & (a != d) & (b != c) & (b != d) & ((a, b) > (c, d))
                 @inbounds network.comparators[i] = (c, d)
                 @inbounds network.comparators[i+1] = (a, b)
@@ -170,6 +75,133 @@ function canonize!(network::SortingNetwork)
         end
     end
 end
+
+
+###################################################### SORTING NETWORK EXECUTION
+
+
+export apply_sort!, apply_two_sum!
+
+
+@inline _branch_free_minmax(x::T, y::T) where {T} =
+    ifelse(x > y, (y, x), (x, y))
+
+
+@inline function _two_sum(a::T, b::T) where {T}
+    s = a + b
+    a_eff = s - b
+    b_eff = s - a_eff
+    a_err = a - a_eff
+    b_err = b - b_eff
+    e = a_err + b_err
+    return (s, e)
+end
+
+
+function apply_sort!(
+    x::AbstractVector{T},
+    network::SortingNetwork{N},
+) where {T,N}
+    Base.require_one_based_indexing(x)
+    @assert length(x) == N
+    for (i, j) in network.comparators
+        @inbounds x[i], x[j] = _branch_free_minmax(x[i], x[j])
+    end
+    return x
+end
+
+
+function apply_two_sum!(
+    x::AbstractVector{T},
+    network::SortingNetwork{N},
+) where {T,N}
+    Base.require_one_based_indexing(x)
+    @assert length(x) == N
+    for (i, j) in network.comparators
+        @inbounds x[i], x[j] = _two_sum(x[i], x[j])
+    end
+    return x
+end
+
+
+function apply_sort_without!(
+    x::AbstractVector{T},
+    network::SortingNetwork{N},
+    index::Int,
+) where {T,N}
+    Base.require_one_based_indexing(x)
+    @assert length(x) == N
+    @assert 1 <= index <= length(network.comparators)
+    for k = 1:index-1
+        @inbounds i, j = network.comparators[k]
+        @inbounds x[i], x[j] = _branch_free_minmax(x[i], x[j])
+    end
+    for k = index+1:length(network.comparators)
+        @inbounds i, j = network.comparators[k]
+        @inbounds x[i], x[j] = _branch_free_minmax(x[i], x[j])
+    end
+    return x
+end
+
+
+function apply_two_sum_without!(
+    x::AbstractVector{T},
+    network::SortingNetwork{N},
+    index::Int,
+) where {T,N}
+    Base.require_one_based_indexing(x)
+    @assert length(x) == N
+    @assert 1 <= index <= length(network.comparators)
+    for k = 1:index-1
+        @inbounds i, j = network.comparators[k]
+        @inbounds x[i], x[j] = _two_sum(x[i], x[j])
+    end
+    for k = index+1:length(network.comparators)
+        @inbounds i, j = network.comparators[k]
+        @inbounds x[i], x[j] = _two_sum(x[i], x[j])
+    end
+    return x
+end
+
+
+################################################ SORTING NETWORK METAPROGRAMMING
+
+
+_meta_sort(a::Symbol, b::Symbol) = Expr(:(=),
+    Expr(:tuple, a, b), Expr(:call, :_branch_free_minmax, a, b))
+
+
+_meta_two_sum(a::Symbol, b::Symbol) = Expr(:(=),
+    Expr(:tuple, a, b), Expr(:call, :_two_sum, a, b))
+
+
+function _meta_sort(network::SortingNetwork{N}) where {N}
+    xs = [Symbol('x', i) for i in Base.OneTo(N)]
+    body = Expr[]
+    push!(body, Expr(:meta, :inline))
+    push!(body, Expr(:(=), Expr(:tuple, xs...), :x))
+    for (i, j) in network.comparators
+        push!(body, _meta_sort(xs[i], xs[j]))
+    end
+    push!(body, Expr(:return, Expr(:tuple, xs...)))
+    return eval(Expr(:->, :x, Expr(:block, body...)))
+end
+
+
+function _meta_two_sum(network::SortingNetwork{N}) where {N}
+    xs = [Symbol('x', i) for i in Base.OneTo(N)]
+    body = Expr[]
+    push!(body, Expr(:meta, :inline))
+    push!(body, Expr(:(=), Expr(:tuple, xs...), :x))
+    for (i, j) in network.comparators
+        push!(body, _meta_two_sum(xs[i], xs[j]))
+    end
+    push!(body, Expr(:return, Expr(:tuple, xs...)))
+    return eval(Expr(:->, :x, Expr(:block, body...)))
+end
+
+
+#=
 
 
 ######################################################## SORTING NETWORK TESTING
@@ -287,6 +319,14 @@ end
 export generate_sorting_network
 
 
+@inline function random_comparator(num_inputs::UInt8)
+    i = rand(Base.OneTo(num_inputs))
+    j = rand(Base.OneTo(num_inputs - one(UInt8)))
+    j += (j >= i)
+    return branch_free_minmax(i, j)
+end
+
+
 function generate_sorting_network(
     test_cases::Set{Vector{T}},
     cond::AbstractCondition,
@@ -299,15 +339,9 @@ function generate_sorting_network(
 
     # Generate a random sorting network by adding random comparators
     # until the network satisfies the given condition on every test case.
-    i_range = Base.OneTo(num_inputs)
-    j_range = Base.OneTo(num_inputs - one(UInt8))
     network = SortingNetwork(num_inputs, Tuple{UInt8,UInt8}[])
     while !passes_all_tests(test_cases, cond, network)
-        i = rand(i_range)
-        j = rand(j_range)
-        j += (j >= i)
-        i, j = branch_free_minmax(i, j)
-        push!(network.comparators, (i, j))
+        push!(network.comparators, random_comparator(num_inputs))
     end
 
     # Prune the network by removing unnecessary comparators.
@@ -969,6 +1003,9 @@ end
 
 println_unicode(network::SortingNetwork; n::Integer=3) =
     println_unicode(stdout, network; n)
+
+
+=#
 
 
 end # module SortingNetworks
