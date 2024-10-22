@@ -814,29 +814,80 @@ function (cond::StronglyNormalizedCondition)(x::AbstractVector)
 end
 
 
-############################################### TEST CASE GENERATOR: MULTIFLOATS
+=#
 
 
-export MultiFloatTestGenerator
+################################################################ RENORMALIZATION
 
 
-struct MultiFloatTestGenerator <: AbstractTwoSumTestGenerator{Float64}
-    x::Vector{Float64}
-    y::Vector{Float64}
-
-    function MultiFloatTestGenerator(
-        num_limbs_x::Integer,
-        num_limbs_y::Integer,
-    )
-        @assert !signbit(num_limbs_x)
-        @assert !signbit(num_limbs_y)
-        len_x = Int(num_limbs_x)
-        len_y = Int(num_limbs_y)
-        return new(
-            Vector{Float64}(undef, len_x),
-            Vector{Float64}(undef, len_y))
+function _renormalize!(v::AbstractVector{T}) where {T}
+    Base.require_one_based_indexing(v)
+    while true
+        changed = false
+        for i = 1:length(v)-1
+            @inbounds x, y = v[i], v[i+1]
+            (s, e) = _two_sum(x, y)
+            changed |= (s, e) !== (x, y)
+            @inbounds v[i], v[i+1] = s, e
+        end
+        if !changed
+            return v
+        end
     end
 end
+
+
+@generated function _top_down_renorm_pass(x::NTuple{N,T}) where {N,T}
+    xs = [Symbol('x', i) for i in Base.OneTo(N)]
+    body = Expr[]
+    push!(body, Expr(:meta, :inline))
+    push!(body, Expr(:(=), Expr(:tuple, xs...), :x))
+    _one = one(N)
+    for i in Base.OneTo(N - _one)
+        push!(body, _meta_two_sum(xs[i], xs[i+_one]))
+    end
+    push!(body, Expr(:return, Expr(:tuple, xs...)))
+    return Expr(:block, body...)
+end
+
+
+@generated function _bottom_up_renorm_pass(x::NTuple{N,T}) where {N,T}
+    xs = [Symbol('x', i) for i in Base.OneTo(N)]
+    body = Expr[]
+    push!(body, Expr(:meta, :inline))
+    push!(body, Expr(:(=), Expr(:tuple, xs...), :x))
+    _one = one(N)
+    for i = (N-_one):-_one:_one
+        push!(body, _meta_two_sum(xs[i], xs[i+_one]))
+    end
+    push!(body, Expr(:return, Expr(:tuple, xs...)))
+    return Expr(:block, body...)
+end
+
+
+function _top_down_renormalize(x::NTuple{N,T}) where {N,T}
+    while true
+        x_next = _top_down_renorm_pass(x)
+        if x_next === x
+            return x
+        end
+        x = x_next
+    end
+end
+
+
+function _bottom_up_renormalize(x::NTuple{N,T}) where {N,T}
+    while true
+        x_next = _bottom_up_renorm_pass(x)
+        if x_next === x
+            return x
+        end
+        x = x_next
+    end
+end
+
+
+################################################## RANDOM FLOATING-POINT NUMBERS
 
 
 @inline _deflate_range_52(i::UInt16) =
@@ -884,24 +935,10 @@ function _generate_random_float()
 end
 
 
-function renormalize!(v::AbstractVector{T}) where {T}
-    Base.require_one_based_indexing(v)
-    while true
-        changed = false
-        for i = 1:length(v)-1
-            @inbounds x, y = v[i], v[i+1]
-            (s, e) = two_sum(x, y)
-            changed |= (s !== x) | (e !== y)
-            @inbounds v[i], v[i+1] = s, e
-        end
-        if !changed
-            return v
-        end
-    end
-end
+############################################### TEST CASE GENERATOR: MULTIFLOATS
 
 
-function riffle!(
+function _riffle!(
     v::AbstractVector{T},
     x::AbstractVector{T},
     y::AbstractVector{T},
@@ -928,6 +965,42 @@ function riffle!(
     end
 
     return v
+end
+
+
+@generated function _riffle(x::NTuple{M,T}, y::NTuple{N,T}) where {M,N,T}
+    xs = [Symbol('x', i) for i in Base.OneTo(M)]
+    ys = [Symbol('y', i) for i in Base.OneTo(N)]
+    vs = _riffle!(Vector{Symbol}(undef, M + N), xs, ys)
+    return Expr(:block, Expr(:meta, :inline),
+        Expr(:(=), Expr(:tuple, xs...), :x),
+        Expr(:(=), Expr(:tuple, ys...), :y),
+        Expr(:return, Expr(:tuple, vs...)))
+end
+
+
+#=
+
+
+export MultiFloatTestGenerator
+
+
+struct MultiFloatTestGenerator <: AbstractTwoSumTestGenerator{Float64}
+    x::Vector{Float64}
+    y::Vector{Float64}
+
+    function MultiFloatTestGenerator(
+        num_limbs_x::Integer,
+        num_limbs_y::Integer,
+    )
+        @assert !signbit(num_limbs_x)
+        @assert !signbit(num_limbs_y)
+        len_x = Int(num_limbs_x)
+        len_y = Int(num_limbs_y)
+        return new(
+            Vector{Float64}(undef, len_x),
+            Vector{Float64}(undef, len_y))
+    end
 end
 
 
