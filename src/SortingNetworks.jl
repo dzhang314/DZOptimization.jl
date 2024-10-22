@@ -124,7 +124,7 @@ function apply_two_sum!(
 end
 
 
-function apply_sort_without!(
+function _apply_sort_without!(
     x::AbstractVector{T},
     network::SortingNetwork{N},
     index::Int,
@@ -144,7 +144,7 @@ function apply_sort_without!(
 end
 
 
-function apply_two_sum_without!(
+function _apply_two_sum_without!(
     x::AbstractVector{T},
     network::SortingNetwork{N},
     index::Int,
@@ -164,7 +164,10 @@ function apply_two_sum_without!(
 end
 
 
-################################################ SORTING NETWORK METAPROGRAMMING
+#################################################### SORTING NETWORK COMPILATION
+
+
+export compile_sort, compile_two_sum
 
 
 _meta_sort(a::Symbol, b::Symbol) = Expr(:(=),
@@ -175,12 +178,13 @@ _meta_two_sum(a::Symbol, b::Symbol) = Expr(:(=),
     Expr(:tuple, a, b), Expr(:call, :_two_sum, a, b))
 
 
-function _meta_sort(network::SortingNetwork{N}) where {N}
+function compile_sort(network::SortingNetwork{N}) where {N}
     xs = [Symbol('x', i) for i in Base.OneTo(N)]
     body = Expr[]
     push!(body, Expr(:meta, :inline))
     push!(body, Expr(:(=), Expr(:tuple, xs...), :x))
     for (i, j) in network.comparators
+        @assert i < j
         push!(body, _meta_sort(xs[i], xs[j]))
     end
     push!(body, Expr(:return, Expr(:tuple, xs...)))
@@ -188,12 +192,13 @@ function _meta_sort(network::SortingNetwork{N}) where {N}
 end
 
 
-function _meta_two_sum(network::SortingNetwork{N}) where {N}
+function compile_two_sum(network::SortingNetwork{N}) where {N}
     xs = [Symbol('x', i) for i in Base.OneTo(N)]
     body = Expr[]
     push!(body, Expr(:meta, :inline))
     push!(body, Expr(:(=), Expr(:tuple, xs...), :x))
     for (i, j) in network.comparators
+        @assert i < j
         push!(body, _meta_two_sum(xs[i], xs[j]))
     end
     push!(body, Expr(:return, Expr(:tuple, xs...)))
@@ -201,56 +206,53 @@ function _meta_two_sum(network::SortingNetwork{N}) where {N}
 end
 
 
-#=
-
-
 ######################################################## SORTING NETWORK TESTING
 
 
-export passes_test, passes_all_tests, passes_all_tests_without
+export passes_test, passes_all_tests
 
 
-abstract type AbstractCondition end
+abstract type AbstractCondition{N} end
 
 
-abstract type AbstractSortingCondition <: AbstractCondition end
+abstract type AbstractSortingCondition{N} <: AbstractCondition{N} end
 
 
-abstract type AbstractTwoSumCondition <: AbstractCondition end
+abstract type AbstractTwoSumCondition{N} <: AbstractCondition{N} end
 
 
 function passes_test(
-    test_case::Vector{T},
-    cond::AbstractSortingCondition,
-    network::SortingNetwork,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    copyto!(v, test_case)
+    test_case::AbstractVector{T},
+    cond::AbstractSortingCondition{N},
+    network::SortingNetwork{N},
+) where {T,N}
+    v = Vector{T}(undef, N)
+    copy!(v, test_case)
     apply_sort!(v, network)
     return cond(v)
 end
 
 
 function passes_test(
-    test_case::Vector{T},
-    cond::AbstractTwoSumCondition,
-    network::SortingNetwork,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    copyto!(v, test_case)
+    test_case::AbstractVector{T},
+    cond::AbstractTwoSumCondition{N},
+    network::SortingNetwork{N},
+) where {T,N}
+    v = Vector{T}(undef, N)
+    copy!(v, test_case)
     apply_two_sum!(v, network)
     return cond(v)
 end
 
 
 function passes_all_tests(
-    test_cases::Set{Vector{T}},
-    cond::AbstractSortingCondition,
-    network::SortingNetwork,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
+    test_cases::AbstractSet{V},
+    cond::AbstractSortingCondition{N},
+    network::SortingNetwork{N},
+) where {T,V<:AbstractVector{T},N}
+    v = Vector{T}(undef, N)
     for test_case in test_cases
-        copyto!(v, test_case)
+        copy!(v, test_case)
         apply_sort!(v, network)
         if !cond(v)
             return false
@@ -261,13 +263,13 @@ end
 
 
 function passes_all_tests(
-    test_cases::Set{Vector{T}},
-    cond::AbstractTwoSumCondition,
-    network::SortingNetwork,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
+    test_cases::AbstractSet{V},
+    cond::AbstractTwoSumCondition{N},
+    network::SortingNetwork{N},
+) where {T,V<:AbstractVector{T},N}
+    v = Vector{T}(undef, N)
     for test_case in test_cases
-        copyto!(v, test_case)
+        copy!(v, test_case)
         apply_two_sum!(v, network)
         if !cond(v)
             return false
@@ -277,16 +279,16 @@ function passes_all_tests(
 end
 
 
-function passes_all_tests_without(
-    test_cases::Set{Vector{T}},
-    cond::AbstractSortingCondition,
-    network::SortingNetwork,
+function _passes_all_tests_without(
+    test_cases::AbstractSet{V},
+    cond::AbstractSortingCondition{N},
+    network::SortingNetwork{N},
     index::Int,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
+) where {T,V<:AbstractVector{T},N}
+    v = Vector{T}(undef, N)
     for test_case in test_cases
-        copyto!(v, test_case)
-        apply_sort_without!(v, network, index)
+        copy!(v, test_case)
+        _apply_sort_without!(v, network, index)
         if !cond(v)
             return false
         end
@@ -295,16 +297,16 @@ function passes_all_tests_without(
 end
 
 
-function passes_all_tests_without(
-    test_cases::Set{Vector{T}},
-    cond::AbstractTwoSumCondition,
-    network::SortingNetwork,
+function _passes_all_tests_without(
+    test_cases::AbstractSet{V},
+    cond::AbstractTwoSumCondition{N},
+    network::SortingNetwork{N},
     index::Int,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
+) where {T,V<:AbstractVector{T},N}
+    v = Vector{T}(undef, N)
     for test_case in test_cases
-        copyto!(v, test_case)
-        apply_two_sum_without!(v, network, index)
+        copy!(v, test_case)
+        _apply_two_sum_without!(v, network, index)
         if !cond(v)
             return false
         end
@@ -329,8 +331,8 @@ end
 
 function generate_sorting_network(
     test_cases::Set{Vector{T}},
-    cond::AbstractCondition,
-) where {T}
+    cond::AbstractCondition{N},
+) where {T,N}
 
     # Validate input data.
     @assert !isempty(test_cases)
@@ -348,7 +350,7 @@ function generate_sorting_network(
     while !isempty(network.comparators)
         pruned = false
         for index = 1:length(network.comparators)
-            if passes_all_tests_without(test_cases, cond, network, index)
+            if _passes_all_tests_without(test_cases, cond, network, index)
                 deleteat!(network.comparators, index)
                 pruned = true
                 break
@@ -372,9 +374,9 @@ export necessary_test_cases
 
 function necessary_test_cases(
     test_cases::Set{Vector{T}},
-    cond::AbstractCondition,
+    cond::AbstractCondition{N},
     networks::Set{SortingNetwork},
-) where {T}
+) where {T,N}
 
     # Compute the set of networks that each test case invalidates.
     invalidation_sets = Dict{Vector{T},Set{SortingNetwork}}()
@@ -424,12 +426,12 @@ abstract type AbstractTwoSumTestGenerator{T} <: AbstractTestGenerator{T} end
 
 function search_for_counterexample(
     cond::AbstractSortingCondition,
-    network::SortingNetwork,
+    network::SortingNetwork{N},
     gen::AbstractSortingTestGenerator{T},
     n::Integer,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    w = Vector{T}(undef, network.num_inputs)
+) where {T,N}
+    v = Vector{T}(undef, N)
+    w = Vector{T}(undef, N)
     count = zero(n)
     _one = one(n)
     while count < n
@@ -447,12 +449,12 @@ end
 
 function search_for_counterexample(
     cond::AbstractTwoSumCondition,
-    network::SortingNetwork,
+    network::SortingNetwork{N},
     gen::AbstractTwoSumTestGenerator{T},
     n::Integer,
-) where {T}
-    v = Vector{T}(undef, network.num_inputs)
-    w = Vector{T}(undef, network.num_inputs)
+) where {T,N}
+    v = Vector{T}(undef, N)
+    w = Vector{T}(undef, N)
     count = zero(n)
     _one = one(n)
     while count < n
@@ -470,14 +472,14 @@ end
 
 function search_for_counterexample_timed(
     cond::AbstractSortingCondition,
-    network::SortingNetwork,
+    network::SortingNetwork{N},
     gen::AbstractSortingTestGenerator{T},
     duration_ns::UInt64,
-) where {T}
+) where {T,N}
     start = time_ns()
     num_tries = zero(UInt64)
-    v = Vector{T}(undef, network.num_inputs)
-    w = Vector{T}(undef, network.num_inputs)
+    v = Vector{T}(undef, N)
+    w = Vector{T}(undef, N)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
         num_tries += 1
@@ -515,14 +517,14 @@ end
 
 function search_for_counterexample_timed(
     cond::AbstractTwoSumCondition,
-    network::SortingNetwork,
+    network::SortingNetwork{N},
     gen::AbstractTwoSumTestGenerator{T},
     duration_ns::UInt64,
-) where {T}
+) where {T,N}
     start = time_ns()
     num_tries = zero(UInt64)
-    v = Vector{T}(undef, network.num_inputs)
-    w = Vector{T}(undef, network.num_inputs)
+    v = Vector{T}(undef, N)
+    w = Vector{T}(undef, N)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
         num_tries += 1
@@ -560,15 +562,15 @@ end
 
 function search_for_counterexample_timed(
     cond::AbstractSortingCondition,
-    network::SortingNetwork,
+    network::SortingNetwork{N},
     gen::AbstractSortingTestGenerator{T},
     duration_ns::UInt64,
     terminate::Atomic{Bool},
-) where {T}
+) where {T,N}
     start = time_ns()
     num_tries = zero(UInt64)
-    v = Vector{T}(undef, network.num_inputs)
-    w = Vector{T}(undef, network.num_inputs)
+    v = Vector{T}(undef, N)
+    w = Vector{T}(undef, N)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
         num_tries += 1
@@ -622,15 +624,15 @@ end
 
 function search_for_counterexample_timed(
     cond::AbstractTwoSumCondition,
-    network::SortingNetwork,
+    network::SortingNetwork{N},
     gen::AbstractTwoSumTestGenerator{T},
     duration_ns::UInt64,
     terminate::Atomic{Bool},
-) where {T}
+) where {T,N}
     start = time_ns()
     num_tries = zero(UInt64)
-    v = Vector{T}(undef, network.num_inputs)
-    w = Vector{T}(undef, network.num_inputs)
+    v = Vector{T}(undef, N)
+    w = Vector{T}(undef, N)
     # This loop is manually unrolled to reduce the overhead of time_ns().
     while time_ns() - start < duration_ns
         num_tries += 1
@@ -683,23 +685,23 @@ end
 
 
 function parallel_search_for_counterexample_timed(
-    cond::AbstractCondition,
+    cond::AbstractCondition{N},
     network::SortingNetwork,
     gen::AbstractTestGenerator{T},
     duration_ns::UInt64,
-) where {T}
-    N = nthreads()
+) where {N,T}
+    P = nthreads()
     terminate = Atomic{Bool}(false)
-    results = Vector{Tuple{Union{Nothing,Vector{T}},UInt64}}(undef, N)
-    @threads for i = 1:N
+    results = Vector{Tuple{Union{Nothing,Vector{T}},UInt64}}(undef, P)
+    @threads for i = 1:P
         @inbounds results[i] = search_for_counterexample_timed(
             deepcopy(cond), network, deepcopy(gen), duration_ns, terminate)
     end
     num_tries = zero(UInt64)
-    @inbounds for i = 1:N
+    @inbounds for i = 1:P
         num_tries += results[i][2]
     end
-    @inbounds for i = 1:N
+    @inbounds for i = 1:P
         if !isnothing(results[i][1])
             return (results[i][1], num_tries)
         end
@@ -736,24 +738,29 @@ struct WeaklyNormalizedCondition <: AbstractTwoSumCondition
 end
 
 
-@inline function _weakly_normalized(a::T, b::T) where {T}
+@inline _unsafe_exponent(x::T) where {T<:Base.IEEEFloat} = Int(
+    (reinterpret(Unsigned, x) & ~Base.sign_mask(T)) >> Base.significand_bits(T)
+) - Base.exponent_bias(T)
+
+
+@inline function _is_weakly_normalized(a::T, b::T) where {T}
     if iszero(b)
         return true
     elseif iszero(a)
         return false
     else
-        return exponent(a) >= exponent(b) + precision(T)
+        return _unsafe_exponent(a) >= _unsafe_exponent(b) + precision(T)
     end
 end
 
 
-@inline function _weakly_normalized(a::T, b::T, n::Int) where {T}
+@inline function _is_weakly_normalized(a::T, b::T, n::Int) where {T}
     if iszero(b)
         return true
     elseif iszero(a)
         return false
     else
-        return exponent(a) >= exponent(b) + n * precision(T)
+        return _unsafe_exponent(a) >= _unsafe_exponent(b) + n * precision(T)
     end
 end
 
@@ -763,14 +770,14 @@ function (cond::WeaklyNormalizedCondition)(x::AbstractVector{T}) where {T}
     @assert length(x) >= cond.num_limbs
     for i = 1:cond.num_limbs-1
         @inbounds a, b = x[i], x[i+1]
-        if !_weakly_normalized(a, b)
+        if !_is_weakly_normalized(a, b)
             return false
         end
     end
     @inbounds first_limb = x[1]
     for i = cond.num_limbs+1:length(x)
         @inbounds e = x[i]
-        if !_weakly_normalized(first_limb, e, cond.num_limbs)
+        if !_is_weakly_normalized(first_limb, e, cond.num_limbs)
             return false
         end
     end
@@ -812,9 +819,6 @@ function (cond::StronglyNormalizedCondition)(x::AbstractVector)
     end
     return true
 end
-
-
-=#
 
 
 ################################################################ RENORMALIZATION
@@ -979,9 +983,6 @@ end
 end
 
 
-#=
-
-
 export MultiFloatTestGenerator
 
 
@@ -1008,14 +1009,17 @@ function (gen::MultiFloatTestGenerator)(v::AbstractVector{T}) where {T}
     for i in eachindex(gen.x)
         @inbounds gen.x[i] = _generate_random_float()
     end
-    renormalize!(gen.x)
+    _renormalize!(gen.x)
     for i in eachindex(gen.y)
         @inbounds gen.y[i] = _generate_random_float()
     end
-    renormalize!(gen.y)
-    riffle!(v, gen.x, gen.y)
+    _renormalize!(gen.y)
+    _riffle!(v, gen.x, gen.y)
     return v
 end
+
+
+#=
 
 
 ################################################## SORTING NETWORK VISUALIZATION
