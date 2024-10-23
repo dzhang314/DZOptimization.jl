@@ -7,7 +7,7 @@ using Base.Threads: Atomic, nthreads, @spawn
 ################################################# SORTING NETWORK DATA STRUCTURE
 
 
-export SortingNetwork, canonize!
+export SortingNetwork, depth, canonize!
 
 
 struct SortingNetwork{N}
@@ -36,24 +36,22 @@ end
     hash(network.comparators, h)
 
 
-# function depth(network::SortingNetwork{N}) where {N}
-#     Base.require_one_based_indexing(network.comparators)
-#     if isempty(network.comparators)
-#         return 0
-#     else
-#         result = 1
-#         for i = 1:length(network.comparators)-1
-#             @inbounds (a, b) = network.comparators[i]
-#             @inbounds (c, d) = network.comparators[i+1]
-#             @assert a < b
-#             @assert c < d
-#             if (a == c) | (a == d) | (b == c) | (b == d)
-#                 result += 1
-#             end
-#         end
-#         return result
-#     end
-# end
+function depth(network::SortingNetwork{N}) where {N}
+    result = 0
+    current_layer = BitSet()
+    for (a, b) in network.comparators
+        if (a in current_layer) || (b in current_layer)
+            result += 1
+            empty!(current_layer)
+        end
+        push!(current_layer, a)
+        push!(current_layer, b)
+    end
+    if !isempty(current_layer)
+        result += 1
+    end
+    return result
+end
 
 
 function canonize!(network::SortingNetwork{N}) where {N}
@@ -582,7 +580,7 @@ function find_counterexample(
     gen::AbstractTestGenerator{N,T},
     cond::AbstractCondition{N},
     network::SortingNetwork{N},
-    duration_ns::UInt64,
+    duration_ns::UInt64;
     num_threads::Int=nthreads(),
 ) where {N,T}
     @assert num_threads >= 1
