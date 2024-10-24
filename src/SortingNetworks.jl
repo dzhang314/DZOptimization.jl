@@ -2,6 +2,7 @@ module SortingNetworks
 
 
 using Base.Threads: Atomic, nthreads, @threads, @spawn
+using Random: shuffle
 import ..assert_valid, ..step!
 
 
@@ -360,13 +361,16 @@ function generate_sorting_network(
     _num_inputs = UInt8(N)
     network = SortingNetwork{N}(Tuple{UInt8,UInt8}[])
     while !passes_all_tests(test_cases, cond, network)
-        push!(network.comparators, _random_comparator(_num_inputs))
+        insert!(network.comparators,
+            rand(1:(length(network.comparators)+1)),
+            _random_comparator(_num_inputs))
     end
 
     # Prune the network by removing unnecessary comparators.
     while !isempty(network.comparators)
         pruned = false
-        for index in eachindex(network.comparators)
+        indices = shuffle(eachindex(network.comparators))
+        for index in indices
             if _passes_all_tests_without(test_cases, cond, network, index)
                 deleteat!(network.comparators, index)
                 pruned = true
