@@ -2,7 +2,7 @@ module SortingNetworks
 
 
 using Base.Threads: Atomic, nthreads, @threads, @spawn
-import ..step!
+import ..assert_valid, ..step!
 
 
 ################################################# SORTING NETWORK DATA STRUCTURE
@@ -583,7 +583,7 @@ end
          for frontier_point in frontier)
 
 
-function _assert_valid(
+function assert_valid(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
 
@@ -751,7 +751,7 @@ function _add_network!(
             _update_frontier!(opt, (length(network), depth(network)))
         end
     else
-        _vprintln(verbose, "Found counterexample to network.")
+        _vprintln(verbose, "Found counterexample.")
         push!(opt.failure_sets, network => BitSet())
         opt.failing_networks[network] = lastindex(opt.failure_sets)
         invalidated_networks = _add_test_case!(opt, counterexample)
@@ -795,7 +795,7 @@ end
 function step!(
     opt::SortingNetworkOptimizer{N,T,G,C};
     duration_ns::UInt64=UInt64(1_000_000_000),
-    verbose::Bool=true,
+    verbose::Bool=false,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
     start = time_ns()
     network, new_point = _generate(opt)

@@ -1,6 +1,7 @@
 module DZOptimization
 
 
+function assert_valid end
 function step! end
 
 
