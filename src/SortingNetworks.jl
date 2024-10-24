@@ -2,6 +2,7 @@ module SortingNetworks
 
 
 using Base.Threads: Atomic, nthreads, @threads, @spawn
+import ..step!
 
 
 ################################################# SORTING NETWORK DATA STRUCTURE
@@ -537,7 +538,7 @@ end
 ####################################################### OPTIMIZER DATA STRUCTURE
 
 
-export SortingNetworkOptimizer
+export SortingNetworkOptimizer, step!
 
 
 struct SortingNetworkOptimizer{
@@ -911,7 +912,7 @@ end
 
 
 @inline _is_strongly_normalized(a::T, b::T) where {T} =
-    (a, b) === two_sum(a, b)
+    (a, b) === _two_sum(a, b)
 
 
 function (cond::StronglyNormalizedCondition{N,M})(
