@@ -587,15 +587,21 @@ function _assert_valid(
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
 
     r = opt.pareto_radius
+    all_points = Set{Tuple{Int,Int}}()
     for (network, _) in opt.passing_networks
         @assert passes_all_tests(opt.test_cases, opt.cond, network)
         len = length(network)
         dep = depth(network)
         point = (len, dep)
+        push!(all_points, point)
         @assert !any(_strictly_dominates(point, frontier_point)
                      for frontier_point in opt.pareto_frontier)
         reduced_point = (len - r, dep - r)
         @assert _lies_on_frontier(reduced_point, opt.pareto_frontier)
+    end
+
+    for point in opt.pareto_frontier
+        @assert point in all_points
     end
 
     for (network, index) in opt.failing_networks
