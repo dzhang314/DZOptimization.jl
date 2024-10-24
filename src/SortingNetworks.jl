@@ -784,6 +784,9 @@ function _retest!(
     duration_ns::UInt64,
     verbose::Bool,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    if isempty(opt.passing_networks)
+        return false
+    end
     old_variance = _variance(Float64, opt.passing_networks)
     network = argmin(opt.passing_networks)
     _add_network!(opt, network; duration_ns, verbose)
