@@ -538,7 +538,7 @@ end
 ####################################################### OPTIMIZER DATA STRUCTURE
 
 
-export SortingNetworkOptimizer, step!
+export SortingNetworkOptimizer, assert_valid, step!
 
 
 struct SortingNetworkOptimizer{

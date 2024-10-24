@@ -1,6 +1,6 @@
 using Dates: format, now
 using DZOptimization.SortingNetworks
-using JLD2: save_object
+using JLD2: load_object, save_object
 
 
 const SAVE_INTERVAL_NS = UInt64(60_000_000_000)
@@ -35,7 +35,7 @@ function main()
         @assert startswith(ARGS[3], filename_prefix)
         @assert endswith(ARGS[3], ".jld2")
         opt = load_object(ARGS[3])
-        @assert opt isa SortingNetworkOptimizer{N,Float64,
+        @assert opt isa SortingNetworkOptimizer{2 * N,Float64,
             MultiFloatTestGenerator{2 * N,N,N},CONDITION_TYPE}
         assert_valid(opt)
     end
@@ -45,6 +45,13 @@ function main()
         step!(opt; verbose=true)
         println()
         flush(stdout)
+
+        num_passing = length(opt.passing_networks)
+        num_failing = length(opt.failing_networks)
+        num_test_cases = length(opt.test_cases)
+        println("$(num_passing) passing networks; ",
+            "$(num_failing) failing networks; ",
+            "$(num_test_cases) test cases.")
 
         if !isempty(opt.pareto_frontier)
             counts = Dict{Tuple{Int,Int},Int}()
@@ -58,9 +65,9 @@ function main()
             end
             println([point => counts[point]
                      for point in sort!(collect(opt.pareto_frontier))])
-            println()
-            flush(stdout)
         end
+        println()
+        flush(stdout)
 
         if time_ns() - last_save_ns >= SAVE_INTERVAL_NS
             disable_sigint() do
