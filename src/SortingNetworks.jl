@@ -661,6 +661,25 @@ function _update_frontier!(
 end
 
 
+function _rebuild_frontier!(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    points = Set{Tuple{Int,Int}}()
+    for (network, _) in opt.passing_networks
+        len = length(network)
+        dep = depth(network)
+        push!(points, (len, dep))
+    end
+    empty!(opt.pareto_frontier)
+    for point in points
+        if _lies_on_frontier(point, points)
+            push!(opt.pareto_frontier, point)
+        end
+    end
+    return opt
+end
+
+
 function _add_test_case!(
     opt::SortingNetworkOptimizer{N,T,G,C},
     test_case::NTuple{N,T},
@@ -673,13 +692,16 @@ function _add_test_case!(
     end
     invalidated_networks = [network for (network, _) in opt.passing_networks
                             if !passes_test(test_case, opt.cond, network)]
-    for network in invalidated_networks
-        @assert passes_all_tests(opt.test_cases, opt.cond, network)
-        delete!(opt.passing_networks, network)
-        failure_set = BitSet()
-        push!(failure_set, index)
-        push!(opt.failure_sets, network => failure_set)
-        opt.failing_networks[network] = lastindex(opt.failure_sets)
+    if !isempty(invalidated_networks)
+        for network in invalidated_networks
+            @assert passes_all_tests(opt.test_cases, opt.cond, network)
+            delete!(opt.passing_networks, network)
+            failure_set = BitSet()
+            push!(failure_set, index)
+            push!(opt.failure_sets, network => failure_set)
+            opt.failing_networks[network] = lastindex(opt.failure_sets)
+        end
+        _rebuild_frontier!(opt)
     end
     push!(opt.test_cases, test_case)
     return invalidated_networks
