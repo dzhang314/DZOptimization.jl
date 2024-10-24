@@ -69,6 +69,12 @@ function main()
         println()
         flush(stdout)
 
+        while SortingNetworks._retest!(opt;
+            duration_ns=UInt64(1_000_000_000), verbose=true)
+        end
+        println()
+        flush(stdout)
+
         if time_ns() - last_save_ns >= SAVE_INTERVAL_NS
             disable_sigint() do
                 timestamp = format(now(), "yyyy-mm-dd-HH-MM-SS")
