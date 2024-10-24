@@ -52,7 +52,6 @@ function main()
         println("$(num_passing) passing networks; ",
             "$(num_failing) failing networks; ",
             "$(num_test_cases) test cases.")
-
         if !isempty(opt.pareto_frontier)
             counts = Dict{Tuple{Int,Int},Int}()
             for (network, _) in opt.passing_networks
@@ -80,9 +79,9 @@ function main()
                 println("Increased number of tests from ",
                     "$old_num_tests to $new_num_tests.")
             end
+            println()
+            flush(stdout)
         end
-        println()
-        flush(stdout)
 
         if time_ns() - last_save_ns >= SAVE_INTERVAL_NS
             disable_sigint() do
