@@ -69,8 +69,17 @@ function main()
         println()
         flush(stdout)
 
-        while SortingNetworks._retest!(opt;
-            duration_ns=UInt64(1_000_000_000), verbose=true)
+        if !isempty(opt.passing_networks)
+            network = argmin(opt.passing_networks)
+            old_num_tests = opt.passing_networks[network]
+            point = (length(network), depth(network))
+            println("Retesting $point network.")
+            opt(network; verbose=true)
+            if haskey(opt.passing_networks, network)
+                new_num_tests = opt.passing_networks[network]
+                println("Increased number of tests from ",
+                    "$old_num_tests to $new_num_tests.")
+            end
         end
         println()
         flush(stdout)

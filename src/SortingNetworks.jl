@@ -723,11 +723,10 @@ function _vprintln(verbose::Bool, args...)
 end
 
 
-function _add_network!(
-    opt::SortingNetworkOptimizer{N,T,G,C},
+function (opt::SortingNetworkOptimizer{N,T,G,C})(
     network::SortingNetwork{N};
-    duration_ns::UInt64,
-    verbose::Bool,
+    duration_ns::UInt64=UInt64(1_000_000_000),
+    verbose::Bool=false,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
 
     @assert canonize!(deepcopy(network)) == network
@@ -779,22 +778,6 @@ function _variance(::Type{T}, data::Dict{K,V}) where {T,K,V}
 end
 
 
-function _retest!(
-    opt::SortingNetworkOptimizer{N,T,G,C};
-    duration_ns::UInt64,
-    verbose::Bool,
-) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
-    if isempty(opt.passing_networks)
-        return false
-    end
-    old_variance = _variance(Float64, opt.passing_networks)
-    network = argmin(opt.passing_networks)
-    _add_network!(opt, network; duration_ns, verbose)
-    new_variance = _variance(Float64, opt.passing_networks)
-    return new_variance < old_variance
-end
-
-
 function step!(
     opt::SortingNetworkOptimizer{N,T,G,C};
     duration_ns::UInt64=UInt64(1_000_000_000),
@@ -804,7 +787,7 @@ function step!(
     network, new_point = _generate(opt)
     elapsed = (time_ns() - start) / 1.0e9
     _vprintln(verbose, "Generated $new_point network in $elapsed seconds.")
-    _add_network!(opt, network; duration_ns, verbose)
+    opt(network; duration_ns, verbose)
     return opt
 end
 
