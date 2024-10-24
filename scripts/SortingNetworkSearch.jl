@@ -3,7 +3,7 @@ using DZOptimization.SortingNetworks
 using JLD2: save_object
 
 
-const SAVE_INTERVAL_NS = UInt64(10_000_000_000)
+const SAVE_INTERVAL_NS = UInt64(60_000_000_000)
 const N = parse(Int, ARGS[2])
 
 
