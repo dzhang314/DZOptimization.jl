@@ -534,6 +534,101 @@ function find_counterexample(
 end
 
 
+####################################################### OPTIMIZER DATA STRUCTURE
+
+
+export SortingNetworkOptimizer
+
+
+struct SortingNetworkOptimizer{
+    N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    test_cases::Vector{NTuple{N,T}}
+    gen::G
+    cond::C
+    passing_networks::Dict{SortingNetwork{N},UInt64}
+    failing_networks::Dict{SortingNetwork{N},BitSet}
+    pareto_frontier::Set{Tuple{Int,Int}}
+    pareto_radius::Int
+end
+
+
+function SortingNetworkOptimizer(
+    gen::G,
+    cond::C;
+    pareto_radius::Integer=0,
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    @assert !signbit(pareto_radius)
+    return SortingNetworkOptimizer{N,T,G,C}(NTuple{N,T}[], gen, cond,
+        Set{SortingNetwork{N}}(), Dict{SortingNetwork{N},BitSet}(),
+        Set{Tuple{Int,Int}}(), Int(pareto_radius))
+end
+
+
+@inline function _lies_on_frontier(
+    (len, dep)::Tuple{Int,Int},
+    frontier::Set{Tuple{Int,Int}},
+)
+    for (opt_len, opt_dep) in frontier
+        if (((opt_len <= len) & (opt_dep < dep)) |
+            ((opt_len < len) & (opt_dep <= dep)))
+            return false
+        end
+    end
+    return true
+end
+
+
+@inline _lies_on_frontier(
+    (len, dep)::Tuple{Int,Int},
+    frontier::Set{Tuple{Int,Int}},
+    radius::Int,
+) = _lies_on_frontier((len - radius, dep - radius), frontier)
+
+
+@inline _lies_on_frontier(
+    network::SortingNetwork{N},
+    frontier::Set{Tuple{Int,Int}},
+    radius::Int,
+) where {N} = _lies_on_frontier(
+    (length(network), depth(network)), frontier, radius)
+
+
+function _generate(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    while true
+        network = generate_sorting_network(opt.test_cases, opt.cond)
+        if _lies_on_frontier(network, opt.pareto_frontier, opt.pareto_radius)
+            return network
+        end
+    end
+end
+
+
+function _add_test_case!() # TODO
+end
+
+
+function step!(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    network = _generate(opt)
+    @assert !haskey(opt.failing_networks, network)
+    counterexample, num_tries = find_counterexample(
+        opt.gen, opt.cond, network, UInt64(1_000_000_000))
+    if isnothing(counterexample)
+        if haskey(opt.passing_networks, network)
+            opt.passing_networks[network] += num_tries
+        else
+            opt.passing_networks[network] = num_tries
+        end
+    else
+        opt.failing_networks[network] = BitSet()
+        _add_test_case!() # TODO
+    end
+end
+
+
 ######################################################### TEST CONDITION: SORTED
 
 
