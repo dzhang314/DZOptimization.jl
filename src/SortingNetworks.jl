@@ -686,39 +686,93 @@ function _add_test_case!(
 end
 
 
-function step!(
+function _vprintln(verbose::Bool, args...)
+    if verbose
+        println(args...)
+        flush(stdout)
+    end
+end
+
+
+function _add_network!(
     opt::SortingNetworkOptimizer{N,T,G,C},
+    network::SortingNetwork{N};
+    duration_ns::UInt64,
+    verbose::Bool,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
 
+    @assert canonize!(deepcopy(network)) == network
+    @assert !haskey(opt.failing_networks, network)
+
     start = time_ns()
-    network, new_point = _generate(opt)
+    counterexample, num_tests = find_counterexample(
+        opt.gen, opt.cond, network, duration_ns)
     elapsed = (time_ns() - start) / 1.0e9
-    println("Generated $new_point network in $elapsed seconds.")
+    _vprintln(verbose, "Performed $num_tests random tests in $elapsed",
+        " seconds ($(num_tests / elapsed) tests per second).")
 
-    # @assert canonize!(deepcopy(network)) == network
-    # @assert !haskey(opt.failing_networks, network)
-
-    counterexample, num_tries = find_counterexample(
-        opt.gen, opt.cond, network, UInt64(1_000_000_000))
     if isnothing(counterexample)
-        println("Network passed $num_tries random tests.")
         if haskey(opt.passing_networks, network)
-            println("Network previously discovered.")
-            opt.passing_networks[network] += num_tries
+            _vprintln(verbose,
+                "Network passed all tests but was previously discovered.")
+            opt.passing_networks[network] += num_tests
         else
-            println("Network is novel.")
-            opt.passing_networks[network] = num_tries
-            _update_frontier!(opt, new_point)
+            _vprintln(verbose, "Network passed all tests and is novel.")
+            opt.passing_networks[network] = num_tests
+            _update_frontier!(opt, (length(network), depth(network)))
         end
     else
-        println("Found counterexample after $num_tries random tests.")
+        _vprintln(verbose, "Found counterexample to network.")
         push!(opt.failure_sets, network => BitSet())
         opt.failing_networks[network] = lastindex(opt.failure_sets)
         invalidated_networks = _add_test_case!(opt, counterexample)
         if !isempty(invalidated_networks)
-            println("Invalidated $(length(invalidated_networks)) previously-passing networks.")
+            num_invalid = length(invalidated_networks)
+            _vprintln(verbose,
+                "Invalidated $num_invalid previously-passing networks.")
         end
     end
+
+    return opt
+end
+
+
+function _variance(::Type{T}, data::Dict{K,V}) where {T,K,V}
+    sum_x = zero(T)
+    sum_x2 = zero(T)
+    for (_, count) in data
+        x = T(count)
+        sum_x += x
+        sum_x2 += abs2(x)
+    end
+    n = T(length(data))
+    return sum_x2 / n - abs2(sum_x / n)
+end
+
+
+function _retest!(
+    opt::SortingNetworkOptimizer{N,T,G,C};
+    duration_ns::UInt64,
+    verbose::Bool,
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    old_variance = _variance(Float64, opt.passing_networks)
+    network = argmin(opt.passing_networks)
+    _add_network!(opt, network; duration_ns, verbose)
+    new_variance = _variance(Float64, opt.passing_networks)
+    return new_variance < old_variance
+end
+
+
+function step!(
+    opt::SortingNetworkOptimizer{N,T,G,C};
+    duration_ns::UInt64=UInt64(1_000_000_000),
+    verbose::Bool=true,
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    start = time_ns()
+    network, new_point = _generate(opt)
+    elapsed = (time_ns() - start) / 1.0e9
+    _vprintln(verbose, "Generated $new_point network in $elapsed seconds.")
+    _add_network!(opt, network; duration_ns, verbose)
     return opt
 end
 
