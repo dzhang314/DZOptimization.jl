@@ -220,116 +220,98 @@ abstract type AbstractTwoSumCondition{N} <: AbstractCondition{N} end
 
 
 function passes_test(
-    test_case::NTuple{N,T},
+    test_case, # intentionally duck-typed
     cond::AbstractSortingCondition{N},
     network::SortingNetwork{N},
-) where {N,T}
-    v = collect(test_case)
-    apply_sort!(v, network)
-    return cond(v)
+) where {N}
+    @assert length(test_case) == N
+    temp = collect(test_case)
+    apply_sort!(temp, network)
+    return cond(temp)
 end
 
 
 function passes_test(
-    test_case::NTuple{N,T},
+    test_case, # intentionally duck-typed
     cond::AbstractTwoSumCondition{N},
     network::SortingNetwork{N},
-) where {N,T}
-    v = collect(test_case)
-    apply_two_sum!(v, network)
-    return cond(v)
+) where {N}
+    @assert length(test_case) == N
+    temp = collect(test_case)
+    apply_two_sum!(temp, network)
+    return cond(temp)
 end
 
 
-function passes_test(
-    test_case::AbstractVector{T},
+function _unsafe_passes_test!(
+    temp::Vector{T},
+    test_case, # intentionally duck-typed
     cond::AbstractSortingCondition{N},
     network::SortingNetwork{N},
 ) where {T,N}
-    v = Vector{T}(undef, N)
-    copy!(v, test_case)
-    apply_sort!(v, network)
-    return cond(v)
+    @simd ivdep for i = 1:N
+        @inbounds temp[i] = test_case[i]
+    end
+    apply_sort!(temp, network)
+    return cond(temp)
 end
 
 
-function passes_test(
-    test_case::AbstractVector{T},
+function _unsafe_passes_test!(
+    temp::Vector{T},
+    test_case, # intentionally duck-typed
     cond::AbstractTwoSumCondition{N},
     network::SortingNetwork{N},
 ) where {T,N}
-    v = Vector{T}(undef, N)
-    copy!(v, test_case)
-    apply_two_sum!(v, network)
-    return cond(v)
+    @simd ivdep for i = 1:N
+        @inbounds temp[i] = test_case[i]
+    end
+    apply_two_sum!(temp, network)
+    return cond(temp)
 end
 
 
-function passes_all_tests(
-    test_cases::AbstractSet{NTuple{N,T}},
+function _unsafe_passes_test_without!(
+    temp::Vector{T},
+    test_case, # intentionally duck-typed
     cond::AbstractSortingCondition{N},
     network::SortingNetwork{N},
-) where {N,T}
-    v = Vector{T}(undef, N)
-    for test_case in test_cases
-        @simd ivdep for i = 1:N
-            @inbounds v[i] = test_case[i]
-        end
-        apply_sort!(v, network)
-        if !cond(v)
-            return false
-        end
+    index::Int,
+) where {T,N}
+    @simd ivdep for i = 1:N
+        @inbounds temp[i] = test_case[i]
     end
-    return true
+    _apply_sort_without!(temp, network, index)
+    return cond(temp)
 end
 
 
-function passes_all_tests(
-    test_cases::AbstractSet{NTuple{N,T}},
+function _unsafe_passes_test_without!(
+    temp::Vector{T},
+    test_case, # intentionally duck-typed
     cond::AbstractTwoSumCondition{N},
     network::SortingNetwork{N},
+    index::Int,
+) where {T,N}
+    @simd ivdep for i = 1:N
+        @inbounds temp[i] = test_case[i]
+    end
+    _apply_sort_without!(temp, network, index)
+    return cond(temp)
+end
+
+
+const AbstractVecOrSet{T} = Union{AbstractVector{T},AbstractSet{T}}
+
+
+function passes_all_tests(
+    test_cases::AbstractVecOrSet{NTuple{N,T}},
+    cond::AbstractCondition{N},
+    network::SortingNetwork{N},
 ) where {N,T}
-    v = Vector{T}(undef, N)
+    temp = Vector{T}(undef, N)
     for test_case in test_cases
-        @simd ivdep for i = 1:N
-            @inbounds v[i] = test_case[i]
-        end
-        apply_two_sum!(v, network)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function passes_all_tests(
-    test_cases::AbstractSet{V},
-    cond::AbstractSortingCondition{N},
-    network::SortingNetwork{N},
-) where {T,V<:AbstractVector{T},N}
-    v = Vector{T}(undef, N)
-    for test_case in test_cases
-        copy!(v, test_case)
-        apply_sort!(v, network)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function passes_all_tests(
-    test_cases::AbstractSet{V},
-    cond::AbstractTwoSumCondition{N},
-    network::SortingNetwork{N},
-) where {T,V<:AbstractVector{T},N}
-    v = Vector{T}(undef, N)
-    for test_case in test_cases
-        copy!(v, test_case)
-        apply_two_sum!(v, network)
-        if !cond(v)
+        if !_unsafe_passes_test!(temp, test_case, cond, network)
             return false
         end
     end
@@ -338,74 +320,14 @@ end
 
 
 function _passes_all_tests_without(
-    test_cases::AbstractSet{NTuple{N,T}},
-    cond::AbstractSortingCondition{N},
+    test_cases::AbstractVecOrSet{NTuple{N,T}},
+    cond::AbstractCondition{N},
     network::SortingNetwork{N},
     index::Int,
 ) where {N,T}
-    v = Vector{T}(undef, N)
+    temp = Vector{T}(undef, N)
     for test_case in test_cases
-        @simd ivdep for i = 1:N
-            @inbounds v[i] = test_case[i]
-        end
-        _apply_sort_without!(v, network, index)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function _passes_all_tests_without(
-    test_cases::AbstractSet{NTuple{N,T}},
-    cond::AbstractTwoSumCondition{N},
-    network::SortingNetwork{N},
-    index::Int,
-) where {N,T}
-    v = Vector{T}(undef, N)
-    for test_case in test_cases
-        @simd ivdep for i = 1:N
-            @inbounds v[i] = test_case[i]
-        end
-        _apply_two_sum_without!(v, network, index)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function _passes_all_tests_without(
-    test_cases::AbstractSet{V},
-    cond::AbstractSortingCondition{N},
-    network::SortingNetwork{N},
-    index::Int,
-) where {T,V<:AbstractVector{T},N}
-    v = Vector{T}(undef, N)
-    for test_case in test_cases
-        copy!(v, test_case)
-        _apply_sort_without!(v, network, index)
-        if !cond(v)
-            return false
-        end
-    end
-    return true
-end
-
-
-function _passes_all_tests_without(
-    test_cases::AbstractSet{V},
-    cond::AbstractTwoSumCondition{N},
-    network::SortingNetwork{N},
-    index::Int,
-) where {T,V<:AbstractVector{T},N}
-    v = Vector{T}(undef, N)
-    for test_case in test_cases
-        copy!(v, test_case)
-        _apply_two_sum_without!(v, network, index)
-        if !cond(v)
+        if !_unsafe_passes_test_without!(temp, test_case, cond, network, index)
             return false
         end
     end
@@ -423,26 +345,27 @@ export generate_sorting_network
     i = rand(Base.OneTo(num_inputs))
     j = rand(Base.OneTo(num_inputs - one(UInt8)))
     j += (j >= i)
-    return branch_free_minmax(i, j)
+    return _branch_free_minmax(i, j)
 end
 
 
 function generate_sorting_network(
-    test_cases::AbstractSet{NTuple{N,T}},
+    test_cases::AbstractVecOrSet{NTuple{N,T}},
     cond::AbstractCondition{N},
 ) where {N,T}
 
     # Generate a random sorting network by adding random comparators
     # until the network satisfies the given condition on every test case.
+    _num_inputs = UInt8(N)
     network = SortingNetwork{N}(Tuple{UInt8,UInt8}[])
     while !passes_all_tests(test_cases, cond, network)
-        push!(network.comparators, _random_comparator(num_inputs))
+        push!(network.comparators, _random_comparator(_num_inputs))
     end
 
     # Prune the network by removing unnecessary comparators.
     while !isempty(network.comparators)
         pruned = false
-        for index = 1:length(network.comparators)
+        for index in eachindex(network.comparators)
             if _passes_all_tests_without(test_cases, cond, network, index)
                 deleteat!(network.comparators, index)
                 pruned = true
