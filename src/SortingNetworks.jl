@@ -1,7 +1,7 @@
 module SortingNetworks
 
 
-using Base.Threads: Atomic, nthreads, @spawn
+using Base.Threads: Atomic, nthreads, @threads, @spawn
 
 
 ################################################# SORTING NETWORK DATA STRUCTURE
@@ -546,7 +546,8 @@ struct SortingNetworkOptimizer{
     gen::G
     cond::C
     passing_networks::Dict{SortingNetwork{N},UInt64}
-    failing_networks::Dict{SortingNetwork{N},BitSet}
+    failing_networks::Dict{SortingNetwork{N},Int}
+    failure_sets::Vector{Pair{SortingNetwork{N},BitSet}}
     pareto_frontier::Set{Tuple{Int,Int}}
     pareto_radius::Int
 end
@@ -558,74 +559,167 @@ function SortingNetworkOptimizer(
     pareto_radius::Integer=0,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
     @assert !signbit(pareto_radius)
-    return SortingNetworkOptimizer{N,T,G,C}(NTuple{N,T}[], gen, cond,
-        Set{SortingNetwork{N}}(), Dict{SortingNetwork{N},BitSet}(),
+    return SortingNetworkOptimizer{N,T,G,C}(
+        NTuple{N,T}[], gen, cond,
+        Dict{SortingNetwork{N},UInt64}(),
+        Dict{SortingNetwork{N},Int}(),
+        Pair{SortingNetwork{N},BitSet}[],
         Set{Tuple{Int,Int}}(), Int(pareto_radius))
 end
 
 
-@inline function _lies_on_frontier(
-    (len, dep)::Tuple{Int,Int},
+@inline _strictly_dominates(
+    (len_a, dep_a)::Tuple{Int,Int},
+    (len_b, dep_b)::Tuple{Int,Int},
+) = (((len_a < len_b) & (dep_a <= dep_b)) |
+     ((len_a <= len_b) & (dep_a < dep_b)))
+
+
+@inline _lies_on_frontier(
+    point::Tuple{Int,Int},
     frontier::Set{Tuple{Int,Int}},
-)
-    for (opt_len, opt_dep) in frontier
-        if (((opt_len <= len) & (opt_dep < dep)) |
-            ((opt_len < len) & (opt_dep <= dep)))
-            return false
+) = !any(_strictly_dominates(frontier_point, point)
+         for frontier_point in frontier)
+
+
+function _assert_valid(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+
+    r = opt.pareto_radius
+    for (network, _) in opt.passing_networks
+        @assert passes_all_tests(opt.test_cases, opt.cond, network)
+        len = length(network)
+        dep = depth(network)
+        point = (len, dep)
+        @assert !any(_strictly_dominates(point, frontier_point)
+                     for frontier_point in opt.pareto_frontier)
+        reduced_point = (len - r, dep - r)
+        @assert _lies_on_frontier(reduced_point, opt.pareto_frontier)
+    end
+
+    for (network, index) in opt.failing_networks
+        _network, failure_set = opt.failure_sets[index]
+        @assert network === _network
+        @assert !isempty(failure_set)
+        for (test_index, test_case) in enumerate(opt.test_cases)
+            if test_index in failure_set
+                @assert !passes_test(test_case, opt.cond, network)
+            else
+                @assert passes_test(test_case, opt.cond, network)
+            end
         end
     end
+
+    for p in opt.pareto_frontier
+        for q in opt.pareto_frontier
+            if p != q
+                @assert !_strictly_dominates(p, q)
+            end
+        end
+    end
+
     return true
 end
-
-
-@inline _lies_on_frontier(
-    (len, dep)::Tuple{Int,Int},
-    frontier::Set{Tuple{Int,Int}},
-    radius::Int,
-) = _lies_on_frontier((len - radius, dep - radius), frontier)
-
-
-@inline _lies_on_frontier(
-    network::SortingNetwork{N},
-    frontier::Set{Tuple{Int,Int}},
-    radius::Int,
-) where {N} = _lies_on_frontier(
-    (length(network), depth(network)), frontier, radius)
 
 
 function _generate(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    r = opt.pareto_radius
     while true
         network = generate_sorting_network(opt.test_cases, opt.cond)
-        if _lies_on_frontier(network, opt.pareto_frontier, opt.pareto_radius)
-            return network
+        len = length(network)
+        dep = depth(network)
+        if _lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
+            return (network, (len, dep))
         end
     end
 end
 
 
-function _add_test_case!() # TODO
+function _update_frontier!(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+    new_point::Tuple{Int,Int},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    if _lies_on_frontier(new_point, opt.pareto_frontier)
+        filter!(p -> !_strictly_dominates(new_point, p), opt.pareto_frontier)
+        push!(opt.pareto_frontier, new_point)
+        r = opt.pareto_radius
+        oob_networks = SortingNetwork{N}[]
+        for (network, _) in opt.passing_networks
+            len = length(network)
+            dep = depth(network)
+            if !_lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
+                push!(oob_networks, network)
+            end
+        end
+        for network in oob_networks
+            delete!(opt.passing_networks, network)
+        end
+    end
+end
+
+
+function _add_test_case!(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+    test_case::NTuple{N,T},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    index = lastindex(opt.test_cases) + 1
+    @threads for (network, failure_set) in opt.failure_sets
+        if !passes_test(test_case, opt.cond, network)
+            push!(failure_set, index)
+        end
+    end
+    invalidated_networks = [network for (network, _) in opt.passing_networks
+                            if !passes_test(test_case, opt.cond, network)]
+    for network in invalidated_networks
+        @assert passes_all_tests(opt.test_cases, opt.cond, network)
+        delete!(opt.passing_networks, network)
+        failure_set = BitSet()
+        push!(failure_set, index)
+        push!(opt.failure_sets, network => failure_set)
+        opt.failing_networks[network] = lastindex(opt.failure_sets)
+    end
+    push!(opt.test_cases, test_case)
+    return invalidated_networks
 end
 
 
 function step!(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
-    network = _generate(opt)
-    @assert !haskey(opt.failing_networks, network)
+
+    start = time_ns()
+    network, new_point = _generate(opt)
+    elapsed = (time_ns() - start) / 1.0e9
+    println("Generated $new_point network in $elapsed seconds.")
+
+    # @assert canonize!(deepcopy(network)) == network
+    # @assert !haskey(opt.failing_networks, network)
+
     counterexample, num_tries = find_counterexample(
         opt.gen, opt.cond, network, UInt64(1_000_000_000))
     if isnothing(counterexample)
+        println("Network passed $num_tries random tests.")
         if haskey(opt.passing_networks, network)
+            println("Network previously discovered.")
             opt.passing_networks[network] += num_tries
         else
+            println("Network is novel.")
             opt.passing_networks[network] = num_tries
+            _update_frontier!(opt, new_point)
         end
     else
-        opt.failing_networks[network] = BitSet()
-        _add_test_case!() # TODO
+        println("Found counterexample after $num_tries random tests.")
+        push!(opt.failure_sets, network => BitSet())
+        opt.failing_networks[network] = lastindex(opt.failure_sets)
+        invalidated_networks = _add_test_case!(opt, counterexample)
+        if !isempty(invalidated_networks)
+            println("Invalidated $(length(invalidated_networks)) previously-passing networks.")
+        end
     end
+    return opt
 end
 
 
