@@ -833,14 +833,13 @@ end
 function (cond::WeaklyNormalizedCondition{N,M})(
     x::NTuple{N,T},
 ) where {N,M,T}
-    Base.require_one_based_indexing(x)
     @inbounds for i = 1:M-1
         if !_is_weakly_normalized(x[i], x[i+1])
             return false
         end
     end
     @inbounds first_limb = x[1]
-    @inbounds for i = M+1:length(x)
+    @inbounds for i = M+1:N
         if !_is_weakly_normalized(first_limb, x[i], M)
             return false
         end
@@ -890,7 +889,6 @@ end
 function (cond::StronglyNormalizedCondition{N,M})(
     x::NTuple{N,T},
 ) where {N,M,T}
-    Base.require_one_based_indexing(x)
     @inbounds for i = 1:M-1
         if !_is_strongly_normalized(x[i], x[i+1])
             return false
@@ -919,6 +917,47 @@ function (cond::StronglyNormalizedCondition{N,M})(
     @inbounds final_limb = x[M]
     @inbounds for i = M+1:N
         if !_is_strongly_normalized(final_limb, x[i])
+            return false
+        end
+    end
+    return true
+end
+
+
+############################################ TEST CONDITION: STRONGLY NORMALIZED
+
+
+export CompletelyNormalizedCondition
+
+
+struct CompletelyNormalizedCondition{N,M} <: AbstractTwoSumCondition{N}
+    function CompletelyNormalizedCondition{N,M}() where {N,M}
+        @assert N >= M >= 1
+        return new{N,M}()
+    end
+end
+
+
+function (cond::CompletelyNormalizedCondition{N,M})(
+    x::NTuple{N,T},
+) where {N,M,T}
+    r = _top_down_renormalize(x)
+    for i = 1:M
+        if r[i] !== x[i]
+            return false
+        end
+    end
+    return true
+end
+
+
+function (cond::CompletelyNormalizedCondition{N,M})(
+    x::AbstractVector{T},
+) where {N,M,T}
+    r = copy(x)
+    _renormalize!(r)
+    for i = 1:M
+        if r[i] !== x[i]
             return false
         end
     end
