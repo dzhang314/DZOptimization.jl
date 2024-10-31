@@ -40,6 +40,8 @@ function main()
         assert_valid(opt)
     end
 
+    start_time_ns = time_ns()
+
     while true
 
         step!(opt; verbose=true)
@@ -87,7 +89,7 @@ function main()
             disable_sigint() do
                 timestamp = format(now(), "yyyy-mm-dd-HH-MM-SS")
                 filename = "$(filename_prefix)-$(timestamp).jld2"
-                println("Saving progress to file $filename.")
+                println("Saving progress to checkpoint file $filename.")
                 println()
                 flush(stdout)
                 save_object(filename, opt)
@@ -97,8 +99,14 @@ function main()
                 end
                 last_save_file = filename
             end
+            if time_ns() - start_time_ns >= 3_600_000_000_000
+                break
+            end
         end
     end
+
+    println("Final checkpoint file: ", last_save_file)
+    println("Exiting after ", time_ns() - start_time_ns, " ns.")
 end
 
 
