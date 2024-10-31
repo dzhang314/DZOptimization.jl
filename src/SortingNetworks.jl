@@ -42,6 +42,7 @@ function depth(network::SortingNetwork{N}) where {N}
     result = 0
     current_layer = BitSet()
     for (a, b) in network.comparators
+        @assert a < b
         if (a in current_layer) || (b in current_layer)
             result += 1
             empty!(current_layer)
