@@ -347,9 +347,7 @@ function generate_sorting_network(
     _num_inputs = UInt8(N)
     network = SortingNetwork{N}(Tuple{UInt8,UInt8}[])
     while !passes_all_tests(test_cases, cond, network)
-        insert!(network.comparators,
-            rand(1:(length(network.comparators)+1)),
-            _random_comparator(_num_inputs))
+        push!(network.comparators, _random_comparator(_num_inputs))
     end
 
     # Prune the network by removing unnecessary comparators.
@@ -368,7 +366,6 @@ function generate_sorting_network(
         end
     end
 
-    canonize!(network)
     return network
 end
 
@@ -624,14 +621,21 @@ function _generate(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
     r = opt.pareto_radius
-    while true
-        network = generate_sorting_network(opt.test_cases, opt.cond)
-        len = length(network)
-        dep = depth(network)
-        if _lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
-            return (network, (len, dep))
+    terminate = Atomic{Bool}(false)
+    result = Ref{Tuple{SortingNetwork{N},Tuple{Int,Int}}}()
+    @threads for _ = 1:nthreads()
+        while !terminate[]
+            network = generate_sorting_network(opt.test_cases, opt.cond)
+            len = length(network)
+            dep = depth(network)
+            if _lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
+                terminate[] = true
+                canonize!(network)
+                result[] = (network, (len, dep))
+            end
         end
     end
+    return result[]
 end
 
 
