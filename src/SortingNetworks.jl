@@ -3,7 +3,7 @@ module SortingNetworks
 
 using Base.Threads: Atomic, nthreads, @threads, @spawn
 using Random: shuffle
-import ..assert_valid, ..step!
+import ..assert_valid, ..step!, ..branch_free_minmax, ..two_sum
 
 
 ################################################# SORTING NETWORK DATA STRUCTURE
@@ -83,21 +83,6 @@ end
 export apply_sort!, apply_two_sum!
 
 
-@inline _branch_free_minmax(x::T, y::T) where {T} =
-    ifelse(x > y, (y, x), (x, y))
-
-
-@inline function _two_sum(a::T, b::T) where {T}
-    s = a + b
-    a_eff = s - b
-    b_eff = s - a_eff
-    a_err = a - a_eff
-    b_err = b - b_eff
-    e = a_err + b_err
-    return (s, e)
-end
-
-
 function apply_sort!(
     x::AbstractVector{T},
     network::SortingNetwork{N},
@@ -105,7 +90,7 @@ function apply_sort!(
     Base.require_one_based_indexing(x)
     @assert length(x) == N
     for (i, j) in network.comparators
-        @inbounds x[i], x[j] = _branch_free_minmax(x[i], x[j])
+        @inbounds x[i], x[j] = branch_free_minmax(x[i], x[j])
     end
     return x
 end
@@ -118,7 +103,7 @@ function apply_two_sum!(
     Base.require_one_based_indexing(x)
     @assert length(x) == N
     for (i, j) in network.comparators
-        @inbounds x[i], x[j] = _two_sum(x[i], x[j])
+        @inbounds x[i], x[j] = two_sum(x[i], x[j])
     end
     return x
 end
@@ -134,11 +119,11 @@ function _apply_sort_without!(
     @assert 1 <= index <= length(network.comparators)
     for k = 1:index-1
         @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = _branch_free_minmax(x[i], x[j])
+        @inbounds x[i], x[j] = branch_free_minmax(x[i], x[j])
     end
     for k = index+1:length(network.comparators)
         @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = _branch_free_minmax(x[i], x[j])
+        @inbounds x[i], x[j] = branch_free_minmax(x[i], x[j])
     end
     return x
 end
@@ -154,11 +139,11 @@ function _apply_two_sum_without!(
     @assert 1 <= index <= length(network.comparators)
     for k = 1:index-1
         @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = _two_sum(x[i], x[j])
+        @inbounds x[i], x[j] = two_sum(x[i], x[j])
     end
     for k = index+1:length(network.comparators)
         @inbounds i, j = network.comparators[k]
-        @inbounds x[i], x[j] = _two_sum(x[i], x[j])
+        @inbounds x[i], x[j] = two_sum(x[i], x[j])
     end
     return x
 end
@@ -171,11 +156,11 @@ export compile_sort, compile_two_sum
 
 
 _meta_sort(a::Symbol, b::Symbol) = Expr(:(=),
-    Expr(:tuple, a, b), Expr(:call, :_branch_free_minmax, a, b))
+    Expr(:tuple, a, b), Expr(:call, :branch_free_minmax, a, b))
 
 
 _meta_two_sum(a::Symbol, b::Symbol) = Expr(:(=),
-    Expr(:tuple, a, b), Expr(:call, :_two_sum, a, b))
+    Expr(:tuple, a, b), Expr(:call, :two_sum, a, b))
 
 
 function compile_sort(network::SortingNetwork{N}) where {N}
@@ -347,7 +332,7 @@ export generate_sorting_network
     i = rand(Base.OneTo(num_inputs))
     j = rand(Base.OneTo(num_inputs - one(UInt8)))
     j += (j >= i)
-    return _branch_free_minmax(i, j)
+    return branch_free_minmax(i, j)
 end
 
 
@@ -902,7 +887,7 @@ end
 
 
 @inline _is_strongly_normalized(a::T, b::T) where {T} =
-    (a, b) === _two_sum(a, b)
+    (a, b) === two_sum(a, b)
 
 
 function (cond::StronglyNormalizedCondition{N,M})(
@@ -993,7 +978,7 @@ function _renormalize!(v::AbstractVector{T}) where {T}
         changed = false
         for i = 1:length(v)-1
             @inbounds x, y = v[i], v[i+1]
-            (s, e) = _two_sum(x, y)
+            (s, e) = two_sum(x, y)
             changed |= (s, e) !== (x, y)
             @inbounds v[i], v[i+1] = s, e
         end
