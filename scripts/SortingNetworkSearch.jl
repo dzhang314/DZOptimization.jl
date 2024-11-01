@@ -99,7 +99,7 @@ function main()
                 end
                 last_save_file = filename
             end
-            if time_ns() - start_time_ns >= 3_600_000_000_000
+            if time_ns() - start_time_ns >= 28_800_000_000_000
                 break
             end
         end
