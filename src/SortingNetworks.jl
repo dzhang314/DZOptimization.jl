@@ -494,6 +494,9 @@ function find_counterexample(
     duration_ns::UInt64;
     num_threads::Int=nthreads(),
 ) where {N,T}
+    if iszero(duration_ns)
+        return (nothing, zero(UInt64))
+    end
     @assert num_threads >= 1
     terminate = Atomic{Bool}(false)
     compiled_network = _compile_helper(gen, cond, network)
@@ -711,7 +714,7 @@ end
 
 function _vprintln(verbose::Bool, args...)
     if verbose
-        println(args...)
+        println(stdout, args...)
         flush(stdout)
     end
 end
@@ -783,6 +786,84 @@ function step!(
     _vprintln(verbose, "Generated $new_point network in $elapsed seconds.")
     opt(network; duration_ns, verbose)
     return opt
+end
+
+
+########################################################## OPTIMIZER COMBINATION
+
+
+export combine
+
+
+_construct_invalidation_set(test_case, cond, networks) = BitSet(
+    i for i in eachindex(networks)
+    if !passes_test(test_case, cond, networks[i]))
+
+_construct_failure_set(test_cases, cond, network) = BitSet(
+    i for i in eachindex(test_cases)
+    if !passes_test(test_cases[i], cond, network))
+
+
+function combine(
+    optimizers::Vector{SortingNetworkOptimizer{N,T,G,C}},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+
+    @assert allequal(opt.gen for opt in optimizers)
+    gen = first(optimizers).gen
+    @assert allequal(opt.cond for opt in optimizers)
+    cond = first(optimizers).cond
+    @assert allequal(opt.pareto_radius for opt in optimizers)
+    pareto_radius = first(optimizers).pareto_radius
+    result = SortingNetworkOptimizer(gen, cond; pareto_radius)
+
+    all_pass_counts = mergewith(+,
+        [opt.passing_networks for opt in optimizers]...)
+    all_networks = collect(union(
+        reduce(union, keys(opt.passing_networks) for opt in optimizers),
+        reduce(union, keys(opt.failing_networks) for opt in optimizers)))
+    all_test_cases = unique!(sort!(reduce(vcat,
+        opt.test_cases for opt in optimizers)))
+
+    sets = [_construct_invalidation_set(test_case, cond, all_networks)
+            for test_case in all_test_cases]
+
+    maximal_set_indices = Int[]
+    for i in sortperm(sets; by=length, rev=true)
+        if !any(issubset(sets[i], sets[j]) for j in maximal_set_indices)
+            push!(maximal_set_indices, i)
+        end
+    end
+
+    for i in eachindex(sets)
+        @assert any(issubset(sets[i], sets[j]) for j in maximal_set_indices)
+    end
+
+    for i in maximal_set_indices
+        for j in maximal_set_indices
+            @assert (i == j) || !issubset(sets[i], sets[j])
+        end
+    end
+
+    for i in maximal_set_indices
+        push!(result.test_cases, all_test_cases[i])
+    end
+
+    failing_indices = collect(reduce(union, sets))
+    for i in failing_indices
+        network = all_networks[i]
+        set = _construct_failure_set(result.test_cases, cond, network)
+        @assert !isempty(set)
+        push!(result.failure_sets, network => set)
+        result.failing_networks[network] = lastindex(result.failure_sets)
+    end
+
+    for i in setdiff(eachindex(all_networks), failing_indices)
+        network = all_networks[i]
+        result(network; duration_ns=zero(UInt64), verbose=false)
+        result.passing_networks[network] += all_pass_counts[network]
+    end
+
+    return result
 end
 
 
