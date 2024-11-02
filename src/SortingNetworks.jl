@@ -858,13 +858,14 @@ function combine(
     end
 
     passing_indices = setdiff(eachindex(all_networks), failing_indices)
-    points = [
+    points = Set([
         (length(all_networks[i]), depth(all_networks[i]))
-        for i in passing_indices]
+        for i in passing_indices])
     r = pareto_radius
     frontier_networks = empty(all_networks)
     for i in passing_indices
-        point = (length(all_networks[i]) - r, depth(all_networks[i]) - r)
+        network = all_networks[i]
+        point = (length(network) - r, depth(network) - r)
         if _lies_on_frontier(point, points)
             push!(frontier_networks, network)
         end
