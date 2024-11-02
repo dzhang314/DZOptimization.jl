@@ -610,9 +610,7 @@ function assert_valid(
 
     for p in opt.pareto_frontier
         for q in opt.pareto_frontier
-            if p != q
-                @assert !_strictly_dominates(p, q)
-            end
+            @assert (p == q) || !_strictly_dominates(p, q)
         end
     end
 
