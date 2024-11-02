@@ -644,7 +644,7 @@ function _rebuild_frontier!(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
     all_points = Set((length(network), depth(network))
-                     for network in passing_networks)
+                     for network in opt.passing_networks)
     frontier_points = Set(point for point in all_points
                           if _lies_on_frontier(point, all_points))
     r = opt.pareto_radius
