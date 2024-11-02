@@ -857,8 +857,20 @@ function combine(
         result.failing_networks[network] = lastindex(result.failure_sets)
     end
 
-    for i in setdiff(eachindex(all_networks), failing_indices)
-        network = all_networks[i]
+    passing_indices = setdiff(eachindex(all_networks), failing_indices)
+    points = [
+        (length(all_networks[i]), depth(all_networks[i]))
+        for i in passing_indices]
+    r = pareto_radius
+    frontier_networks = empty(all_networks)
+    for i in passing_indices
+        point = (length(all_networks[i]) - r, depth(all_networks[i]) - r)
+        if _lies_on_frontier(point, points)
+            push!(frontier_networks, network)
+        end
+    end
+
+    for network in frontier_networks
         result(network; duration_ns=zero(UInt64), verbose=false)
         result.passing_networks[network] += all_pass_counts[network]
     end
