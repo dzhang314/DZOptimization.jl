@@ -642,44 +642,23 @@ function _generate(
 end
 
 
-function _update_frontier!(
-    opt::SortingNetworkOptimizer{N,T,G,C},
-    new_point::Tuple{Int,Int},
-) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
-    if _lies_on_frontier(new_point, opt.pareto_frontier)
-        filter!(p -> !_strictly_dominates(new_point, p), opt.pareto_frontier)
-        push!(opt.pareto_frontier, new_point)
-        r = opt.pareto_radius
-        oob_networks = SortingNetwork{N}[]
-        for (network, _) in opt.passing_networks
-            len = length(network)
-            dep = depth(network)
-            if !_lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
-                push!(oob_networks, network)
-            end
-        end
-        for network in oob_networks
-            delete!(opt.passing_networks, network)
-        end
-    end
-end
-
-
 function _rebuild_frontier!(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
-    points = Set{Tuple{Int,Int}}()
-    for (network, _) in opt.passing_networks
-        len = length(network)
-        dep = depth(network)
-        push!(points, (len, dep))
+    all_points = Set((length(network), depth(network))
+                     for network in passing_networks)
+    frontier_points = Set(point for point in all_points
+                          if _lies_on_frontier(point, all_points))
+    r = opt.pareto_radius
+    frontier_networks = Set(
+        network for (network, _) in opt.passing_networks if _lies_on_frontier(
+            (length(network) - r, depth(network) - r), frontier_points))
+    obsolete_networks = setdiff(keys(opt.passing_networks), frontier_networks)
+    for network in obsolete_networks
+        delete!(opt.passing_networks, network)
     end
     empty!(opt.pareto_frontier)
-    for point in points
-        if _lies_on_frontier(point, points)
-            push!(opt.pareto_frontier, point)
-        end
-    end
+    union!(opt.pareto_frontier, frontier_points)
     return opt
 end
 
@@ -744,7 +723,7 @@ function (opt::SortingNetworkOptimizer{N,T,G,C})(
         else
             _vprintln(verbose, "Network passed all tests and is novel.")
             opt.passing_networks[network] = num_tests
-            _update_frontier!(opt, (length(network), depth(network)))
+            _rebuild_frontier!(opt)
         end
     else
         _vprintln(verbose, "Found counterexample.")
@@ -858,23 +837,11 @@ function combine(
     end
 
     passing_indices = setdiff(eachindex(all_networks), failing_indices)
-    points = Set([
-        (length(all_networks[i]), depth(all_networks[i]))
-        for i in passing_indices])
-    r = pareto_radius
-    frontier_networks = empty(all_networks)
     for i in passing_indices
         network = all_networks[i]
-        point = (length(network) - r, depth(network) - r)
-        if _lies_on_frontier(point, points)
-            push!(frontier_networks, network)
-        end
+        result.passing_networks[network] = all_pass_counts[network]
     end
-
-    for network in frontier_networks
-        result(network; duration_ns=zero(UInt64), verbose=false)
-        result.passing_networks[network] += all_pass_counts[network]
-    end
+    _rebuild_frontier!(result)
 
     return result
 end
