@@ -327,7 +327,7 @@ end
 
 
 export random_insert!, random_replace!, random_swap!,
-    removable_comparators, generate_sorting_network
+    removable_comparators, prune!, generate_sorting_network, generate_mutation
 
 
 @inline function _random_comparator(num_inputs::UInt8)
@@ -371,6 +371,21 @@ removable_comparators(
     if _passes_all_tests_without(test_cases, cond, network, index))
 
 
+function prune!(
+    network::SortingNetwork{N},
+    test_cases::AbstractVecOrSet{NTuple{N,T}},
+    cond::AbstractCondition{N},
+) where {N,T}
+    while true
+        removable_indices = removable_comparators(test_cases, cond, network)
+        if isempty(removable_indices)
+            return network
+        end
+        deleteat!(network.comparators, rand(removable_indices))
+    end
+end
+
+
 function generate_sorting_network(
     test_cases::AbstractVecOrSet{NTuple{N,T}},
     cond::AbstractCondition{N},
@@ -385,22 +400,37 @@ function generate_sorting_network(
     end
 
     # Prune the network by removing unnecessary comparators.
-    while !isempty(network.comparators)
-        pruned = false
-        indices = shuffle(eachindex(network.comparators))
-        for index in indices
-            if _passes_all_tests_without(test_cases, cond, network, index)
-                deleteat!(network.comparators, index)
-                pruned = true
-                break
-            end
+    return prune!(network, test_cases, cond)
+end
+
+
+function generate_mutation(
+    network::SortingNetwork{N},
+    test_cases::AbstractVecOrSet{NTuple{N,T}},
+    cond::AbstractCondition{N};
+    insertion_radius::Int,
+    replacement_radius::Int,
+    swap_radius::Int,
+) where {N,T}
+    @assert !signbit(insertion_radius)
+    @assert !signbit(replacement_radius)
+    @assert !signbit(swap_radius)
+    while true
+        new_network, _ = random_insert!(deepcopy(network))
+        for _ = 1:rand(0:insertion_radius)
+            random_insert!(new_network)
         end
-        if !pruned
-            break
+        for _ = 1:rand(0:replacement_radius)
+            random_replace!(new_network)
+        end
+        for _ = 1:rand(0:swap_radius)
+            random_swap!(new_network)
+        end
+        prune!(new_network, test_cases, cond)
+        if passes_all_tests(test_cases, cond, new_network)
+            return new_network
         end
     end
-
-    return network
 end
 
 
@@ -667,6 +697,18 @@ function _generate(
                 terminate[] = true
                 canonize!(network)
                 result[] = (network, (len, dep))
+            end
+            if !isempty(opt.passing_networks)
+                network = generate_mutation(
+                    rand(keys(opt.passing_networks)), opt.test_cases, opt.cond,
+                    insertion_radius=3, replacement_radius=3, swap_radius=3)
+                len = length(network)
+                dep = depth(network)
+                if _lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
+                    terminate[] = true
+                    canonize!(network)
+                    result[] = (network, (len, dep))
+                end
             end
         end
     end
