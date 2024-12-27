@@ -284,7 +284,7 @@ function _unsafe_passes_test_without!(
     @simd ivdep for i = 1:N
         @inbounds temp[i] = test_case[i]
     end
-    _apply_sort_without!(temp, network, index)
+    _apply_two_sum_without!(temp, network, index)
     return cond(temp)
 end
 
