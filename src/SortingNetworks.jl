@@ -326,7 +326,8 @@ end
 ##################################################### SORTING NETWORK GENERATION
 
 
-export random_insert!, removable_comparators, generate_sorting_network
+export random_insert!, random_replace!, random_swap!,
+    removable_comparators, generate_sorting_network
 
 
 @inline function _random_comparator(num_inputs::UInt8)
@@ -340,7 +341,24 @@ end
 function random_insert!(network::SortingNetwork{N}) where {N}
     index = rand(Base.OneTo(length(network.comparators) + 1))
     insert!(network.comparators, index, _random_comparator(UInt8(N)))
-    return network
+    return (network, index)
+end
+
+
+function random_replace!(network::SortingNetwork{N}) where {N}
+    index = rand(Base.OneTo(length(network.comparators)))
+    network.comparators[index] = _random_comparator(UInt8(N))
+    return (network, index)
+end
+
+
+function random_swap!(network::SortingNetwork{N}) where {N}
+    i = rand(Base.OneTo(length(network.comparators)))
+    j = rand(Base.OneTo(length(network.comparators) - 1))
+    j += (j >= i)
+    @inbounds network.comparators[i], network.comparators[j] =
+        network.comparators[j], network.comparators[i]
+    return (network, (i, j))
 end
 
 
