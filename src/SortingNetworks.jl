@@ -326,7 +326,7 @@ end
 ##################################################### SORTING NETWORK GENERATION
 
 
-export generate_sorting_network
+export random_insert!, removable_comparators, generate_sorting_network
 
 
 @inline function _random_comparator(num_inputs::UInt8)
@@ -335,6 +335,22 @@ export generate_sorting_network
     j += (j >= i)
     return branch_free_minmax(i, j)
 end
+
+
+function random_insert!(network::SortingNetwork{N}) where {N}
+    index = rand(Base.OneTo(length(network.comparators) + 1))
+    insert!(network.comparators, index, _random_comparator(UInt8(N)))
+    return network
+end
+
+
+removable_comparators(
+    test_cases::AbstractVecOrSet{NTuple{N,T}},
+    cond::AbstractCondition{N},
+    network::SortingNetwork{N},
+) where {N,T} = BitSet(
+    index for index in eachindex(network.comparators)
+    if _passes_all_tests_without(test_cases, cond, network, index))
 
 
 function generate_sorting_network(
@@ -1213,9 +1229,6 @@ end
     _top_down_renormalize(ntuple(_ -> _generate_random_float(), Val{Y}())))
 
 
-#=
-
-
 ################################################## SORTING NETWORK VISUALIZATION
 
 
@@ -1237,27 +1250,32 @@ const UNICODE_PADDING_CHARACTERS = Dict([
 function println_padded_unicode(
     io::IO,
     line::AbstractVector{Char};
-    n::Integer=3,
+    spacing::Integer=3,
 )
     Base.require_one_based_indexing(line)
     for i = 1:length(line)-1
         @inbounds a, b = line[i], line[i+1]
         padding = UNICODE_PADDING_CHARACTERS[(a, b)]
         print(io, a)
-        for _ = Base.OneTo(n)
+        for _ = Base.OneTo(spacing)
             print(io, padding)
         end
     end
     print(io, line[end], '\n')
+    flush(io)
 end
 
 
-function println_unicode(io::IO, network::SortingNetwork; n::Integer=3)
-    line = fill(Char(0x2502), network.num_inputs)
+function println_unicode(
+    io::IO,
+    network::SortingNetwork{N};
+    spacing::Integer=3,
+) where {N}
+    line = fill(Char(0x2502), N)
     for (i, j) in network.comparators
         @assert i < j
         if any(line[k] != Char(0x2502) for k = i:j)
-            println_padded_unicode(io, line; n)
+            println_padded_unicode(io, line; spacing)
             fill!(line, Char(0x2502))
         end
         line[i] = Char(0x255E)
@@ -1267,16 +1285,13 @@ function println_unicode(io::IO, network::SortingNetwork; n::Integer=3)
         end
     end
     if any(c != Char(0x2502) for c in line)
-        println_padded_unicode(io, line; n)
+        println_padded_unicode(io, line; spacing)
     end
 end
 
 
-println_unicode(network::SortingNetwork; n::Integer=3) =
-    println_unicode(stdout, network; n)
-
-
-=#
+println_unicode(network::SortingNetwork; spacing::Integer=3) =
+    println_unicode(stdout, network; spacing)
 
 
 end # module SortingNetworks
