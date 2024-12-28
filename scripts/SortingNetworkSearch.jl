@@ -34,7 +34,7 @@ function main()
 
     gen = MultiFloatTestGenerator{2 * N,N,N}()
     cond = CONDITION_TYPE()
-    opt = SortingNetworkOptimizer(gen, cond; pareto_radius=1)
+    opt = SortingNetworkOptimizer(gen, cond, N; pareto_radius=10)
 
     last_save_ns = time_ns()
     last_save_file = nothing
@@ -66,7 +66,7 @@ function main()
         if !isempty(opt.pareto_frontier)
             counts = Dict{Tuple{Int,Int},Int}()
             for (network, _) in opt.passing_networks
-                point = (length(network), depth(network))
+                point = fitness(opt, network)
                 if haskey(counts, point)
                     counts[point] += 1
                 else
@@ -82,7 +82,7 @@ function main()
         if !isempty(opt.passing_networks)
             network = argmin(opt.passing_networks)
             old_num_tests = opt.passing_networks[network]
-            point = (length(network), depth(network))
+            point = fitness(opt, network)
             println("Retesting $point network.")
             opt(network; verbose=true)
             if haskey(opt.passing_networks, network)

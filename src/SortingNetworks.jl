@@ -9,7 +9,7 @@ import ..assert_valid, ..step!, ..branch_free_minmax, ..two_sum
 ################################################# SORTING NETWORK DATA STRUCTURE
 
 
-export SortingNetwork, depth, canonize!
+export SortingNetwork
 
 
 struct SortingNetwork{N}
@@ -33,48 +33,219 @@ end
 @inline Base.length(network::SortingNetwork{N}) where {N} =
     length(network.comparators)
 @inline Base.:(==)(a::SortingNetwork{N}, b::SortingNetwork{N}) where {N} =
-    a.comparators == b.comparators
+    (a.comparators == b.comparators)
 @inline Base.hash(network::SortingNetwork{N}, h::UInt) where {N} =
     hash(network.comparators, h)
 
 
-function depth(network::SortingNetwork{N}) where {N}
-    result = 0
-    current_layer = BitSet()
-    for (a, b) in network.comparators
-        @assert a < b
-        if (a in current_layer) || (b in current_layer)
-            result += 1
-            empty!(current_layer)
+####################################################### SORTING NETWORK ANALYSIS
+
+
+export assert_valid, canonize, sort_fitness, two_sum_fitness
+
+
+struct Instruction{T}
+    opcode::Symbol
+    outputs::Vector{T}
+    inputs::Vector{T}
+end
+
+
+const AbstractVecOrSet{T} = Union{AbstractVector{T},AbstractSet{T}}
+
+
+function assert_valid(
+    code::AbstractVector{Instruction{T}},
+    outputs::AbstractVecOrSet{T},
+    inputs::AbstractVecOrSet{T},
+) where {T}
+    computed = Set{T}(inputs)
+    for instr in code
+        for input in instr.inputs
+            @assert input in computed
         end
-        push!(current_layer, a)
-        push!(current_layer, b)
+        for output in instr.outputs
+            @assert !(output in computed)
+            push!(computed, output)
+        end
     end
-    if !isempty(current_layer)
-        result += 1
+    @assert issubset(outputs, computed)
+    return true
+end
+
+
+function eliminate_dead_code!(
+    code::AbstractVector{Instruction{T}},
+    outputs::AbstractVecOrSet{T},
+) where {T}
+    if !isempty(code)
+        needed = Set{T}(outputs)
+        dead_indices = BitSet()
+        for (index, instr) in Iterators.reverse(pairs(code))
+            if any(output in needed for output in instr.outputs)
+                for input in instr.inputs
+                    push!(needed, input)
+                end
+            else
+                push!(dead_indices, index)
+            end
+        end
+        deleteat!(code, dead_indices)
+    end
+    return code
+end
+
+
+function canonize_code(
+    code::AbstractVector{Instruction{T}},
+    outputs::AbstractVecOrSet{T},
+    inputs::AbstractVecOrSet{T},
+) where {T}
+    eliminate_dead_code!(code, outputs)
+    if isempty(code)
+        return code
+    end
+    generation = Dict{T,Int}()
+    blocks = Vector{Vector{Instruction{T}}}()
+    for input in inputs
+        generation[input] = 0
+    end
+    for instr in code
+        gen = 0
+        for input in instr.inputs
+            @assert haskey(generation, input)
+            gen = max(gen, generation[input])
+        end
+        gen += 1
+        if gen <= length(blocks)
+            push!(blocks[gen], instr)
+        else
+            @assert gen == length(blocks) + 1
+            push!(blocks, [instr])
+        end
+        for output in instr.outputs
+            @assert !haskey(generation, output)
+            generation[output] = gen
+        end
+    end
+    for block in blocks
+        sort!(block, by=instr -> instr.outputs)
+    end
+    return reduce(vcat, blocks)
+end
+
+
+function code_depth(
+    code::AbstractVector{Instruction{T}},
+    outputs::AbstractVecOrSet{T},
+    inputs::AbstractVecOrSet{T},
+) where {T}
+    generation = Dict{T,Int}()
+    for input in inputs
+        generation[input] = 0
+    end
+    for instr in code
+        gen = 0
+        for input in instr.inputs
+            @assert haskey(generation, input)
+            gen = max(gen, generation[input])
+        end
+        gen += 1
+        for output in instr.outputs
+            @assert !haskey(generation, output)
+            generation[output] = gen
+        end
+    end
+    result = 0
+    for output in outputs
+        @assert haskey(generation, output)
+        result = max(result, generation[output])
     end
     return result
 end
 
 
-function canonize!(network::SortingNetwork{N}) where {N}
-    Base.require_one_based_indexing(network.comparators)
-    while true
-        changed = false
-        for i = 1:length(network.comparators)-1
-            @inbounds (a, b) = network.comparators[i]
-            @inbounds (c, d) = network.comparators[i+1]
-            @assert (a < b) & (c < d)
-            if (a != c) & (a != d) & (b != c) & (b != d) & ((a, b) > (c, d))
-                @inbounds network.comparators[i] = (c, d)
-                @inbounds network.comparators[i+1] = (a, b)
-                changed = true
-            end
-        end
-        if !changed
-            return network
-        end
+function sort_code(
+    network::SortingNetwork{N},
+    num_outputs::Int,
+) where {N}
+    generation = [1 for _ = 1:N]
+    code = Instruction{Tuple{Int,Int}}[]
+    for (x, y) in network.comparators
+        @assert x < y
+        x = Int(x)
+        y = Int(y)
+        i = generation[x]
+        j = generation[y]
+        i_next = i + 1
+        j_next = j + 1
+        push!(code, Instruction(:minmax,
+            [(x, i_next), (y, j_next)], [(x, i), (y, j)]))
+        generation[x] = i_next
+        generation[y] = j_next
     end
+    outputs = [(i, generation[i]) for i = 1:num_outputs]
+    inputs = [(i, 1) for i = 1:N]
+    return (code, outputs, inputs)
+end
+
+
+function canonize(network::SortingNetwork{N}) where {N}
+    code, outputs, inputs = sort_code(network, N)
+    return SortingNetwork{N}([
+        (UInt8(instr.outputs[1][1]), UInt8(instr.outputs[2][1]))
+        for instr in canonize_code(code, outputs, inputs)])
+end
+
+
+function sort_fitness(
+    network::SortingNetwork{N},
+    num_outputs::Int,
+) where {N}
+    code, outputs, inputs = sort_code(network, num_outputs)
+    eliminate_dead_code!(code, outputs)
+    return (length(code), code_depth(code, outputs, inputs))
+end
+
+
+function two_sum_code(
+    network::SortingNetwork{N},
+    num_outputs::Int,
+) where {N}
+    generation = [1 for _ = 1:N]
+    code = Instruction{Tuple{Int,Int}}[]
+    k = N
+    for (x, y) in network.comparators
+        @assert x < y
+        x = Int(x)
+        y = Int(y)
+        i = generation[x]
+        j = generation[y]
+        i_next = i + 1
+        j_next = j + 1
+        k += 1
+        push!(code, Instruction(:+, [(x, i_next)], [(x, i), (y, j)]))
+        push!(code, Instruction(:-, [(k, 1)], [(x, i_next), (y, j)]))
+        push!(code, Instruction(:-, [(k, 2)], [(x, i_next), (k, 1)]))
+        push!(code, Instruction(:-, [(k, 3)], [(x, i), (k, 1)]))
+        push!(code, Instruction(:-, [(k, 4)], [(y, j), (k, 2)]))
+        push!(code, Instruction(:+, [(y, j_next)], [(k, 3), (k, 4)]))
+        generation[x] = i_next
+        generation[y] = j_next
+    end
+    outputs = [(i, generation[i]) for i = 1:num_outputs]
+    inputs = [(i, 1) for i = 1:N]
+    return (code, outputs, inputs)
+end
+
+
+function two_sum_fitness(
+    network::SortingNetwork{N},
+    num_outputs::Int,
+) where {N}
+    code, outputs, inputs = two_sum_code(network, num_outputs)
+    eliminate_dead_code!(code, outputs)
+    return (length(code), code_depth(code, outputs, inputs))
 end
 
 
@@ -287,9 +458,6 @@ function _unsafe_passes_test_without!(
     _apply_two_sum_without!(temp, network, index)
     return cond(temp)
 end
-
-
-const AbstractVecOrSet{T} = Union{AbstractVector{T},AbstractSet{T}}
 
 
 function passes_all_tests(
@@ -592,7 +760,7 @@ end
 ####################################################### OPTIMIZER DATA STRUCTURE
 
 
-export SortingNetworkOptimizer, assert_valid, step!
+export SortingNetworkOptimizer, fitness, assert_valid, step!
 
 
 struct SortingNetworkOptimizer{
@@ -600,6 +768,7 @@ struct SortingNetworkOptimizer{
     test_cases::Vector{NTuple{N,T}}
     gen::G
     cond::C
+    num_outputs::Int
     passing_networks::Dict{SortingNetwork{N},UInt64}
     failing_networks::Dict{SortingNetwork{N},Int}
     failure_sets::Vector{Pair{SortingNetwork{N},BitSet}}
@@ -610,12 +779,14 @@ end
 
 function SortingNetworkOptimizer(
     gen::G,
-    cond::C;
+    cond::C,
+    num_outputs::Int;
     pareto_radius::Integer=0,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+    @assert !signbit(num_outputs)
     @assert !signbit(pareto_radius)
     return SortingNetworkOptimizer{N,T,G,C}(
-        NTuple{N,T}[], gen, cond,
+        NTuple{N,T}[], gen, cond, num_outputs,
         Dict{SortingNetwork{N},UInt64}(),
         Dict{SortingNetwork{N},Int}(),
         Pair{SortingNetwork{N},BitSet}[],
@@ -637,6 +808,29 @@ end
          for frontier_point in frontier)
 
 
+@inline _fitness_helper(
+    ::AbstractSortingTestGenerator{N,T},
+    ::AbstractSortingCondition{N},
+    network::SortingNetwork{N},
+    num_outputs::Int,
+) where {N,T} = sort_fitness(network, num_outputs)
+
+
+@inline _fitness_helper(
+    ::AbstractTwoSumTestGenerator{N,T},
+    ::AbstractTwoSumCondition{N},
+    network::SortingNetwork{N},
+    num_outputs::Int,
+) where {N,T} = two_sum_fitness(network, num_outputs)
+
+
+@inline fitness(
+    opt::SortingNetworkOptimizer{N,T,G,C},
+    network::SortingNetwork{N},
+) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}} =
+    _fitness_helper(opt.gen, opt.cond, network, opt.num_outputs)
+
+
 function assert_valid(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
@@ -644,15 +838,13 @@ function assert_valid(
     r = opt.pareto_radius
     all_points = Set{Tuple{Int,Int}}()
     for (network, _) in opt.passing_networks
+        @assert network == canonize(network)
         @assert passes_all_tests(opt.test_cases, opt.cond, network)
-        len = length(network)
-        dep = depth(network)
-        point = (len, dep)
+        point = fitness(opt, network)
         push!(all_points, point)
         @assert !any(_strictly_dominates(point, frontier_point)
                      for frontier_point in opt.pareto_frontier)
-        reduced_point = (len - r, dep - r)
-        @assert _lies_on_frontier(reduced_point, opt.pareto_frontier)
+        @assert _lies_on_frontier(point .- r, opt.pareto_frontier)
     end
 
     for point in opt.pareto_frontier
@@ -660,6 +852,7 @@ function assert_valid(
     end
 
     for (network, index) in opt.failing_networks
+        @assert network == canonize(network)
         _network, failure_set = opt.failure_sets[index]
         @assert network === _network
         @assert !isempty(failure_set)
@@ -687,30 +880,26 @@ function _generate(
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
     r = opt.pareto_radius
     frontier_networks = Set(
-        network for (network, _) in opt.passing_networks if _lies_on_frontier(
-            (length(network) - r, depth(network) - r), opt.pareto_frontier))
+        network for (network, _) in opt.passing_networks
+        if _lies_on_frontier(fitness(opt, network) .- r, opt.pareto_frontier))
     terminate = Atomic{Bool}(false)
     result = Ref{Tuple{SortingNetwork{N},Tuple{Int,Int}}}()
     @threads for _ = 1:nthreads()
         while !terminate[]
             network = generate_sorting_network(opt.test_cases, opt.cond)
-            len = length(network)
-            dep = depth(network)
-            if _lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
+            point = fitness(opt, network)
+            if _lies_on_frontier(point .- r, opt.pareto_frontier)
                 terminate[] = true
-                canonize!(network)
-                result[] = (network, (len, dep))
+                result[] = (canonize(network), point)
             end
             if !isempty(frontier_networks)
                 network = generate_mutation(
                     rand(frontier_networks), opt.test_cases, opt.cond;
                     insertion_radius=3, replacement_radius=3, swap_radius=3)
-                len = length(network)
-                dep = depth(network)
-                if _lies_on_frontier((len - r, dep - r), opt.pareto_frontier)
+                point = fitness(opt, network)
+                if _lies_on_frontier(point .- r, opt.pareto_frontier)
                     terminate[] = true
-                    canonize!(network)
-                    result[] = (network, (len, dep))
+                    result[] = (canonize(network), point)
                 end
             end
         end
@@ -722,14 +911,14 @@ end
 function _rebuild_frontier!(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
-    all_points = Set((length(network), depth(network))
+    all_points = Set(fitness(opt, network)
                      for (network, _) in opt.passing_networks)
     frontier_points = Set(point for point in all_points
                           if _lies_on_frontier(point, all_points))
     r = opt.pareto_radius
     frontier_networks = Set(
-        network for (network, _) in opt.passing_networks if _lies_on_frontier(
-            (length(network) - r, depth(network) - r), frontier_points))
+        network for (network, _) in opt.passing_networks
+        if _lies_on_frontier(fitness(opt, network) .- r, frontier_points))
     obsolete_networks = setdiff(keys(opt.passing_networks), frontier_networks)
     for network in obsolete_networks
         delete!(opt.passing_networks, network)
@@ -782,7 +971,7 @@ function (opt::SortingNetworkOptimizer{N,T,G,C})(
     verbose::Bool=false,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
 
-    @assert canonize!(deepcopy(network)) == network
+    @assert canonize(network) == network
     @assert !haskey(opt.failing_networks, network)
 
     start = time_ns()
@@ -868,9 +1057,11 @@ function combine(
     gen = first(optimizers).gen
     @assert allequal(opt.cond for opt in optimizers)
     cond = first(optimizers).cond
+    @assert allequal(opt.num_outputs for opt in optimizers)
+    num_outputs = first(optimizers).num_outputs
     @assert allequal(opt.pareto_radius for opt in optimizers)
     pareto_radius = first(optimizers).pareto_radius
-    result = SortingNetworkOptimizer(gen, cond; pareto_radius)
+    result = SortingNetworkOptimizer(gen, cond, num_outputs; pareto_radius)
 
     all_pass_counts = mergewith(+,
         [opt.passing_networks for opt in optimizers]...)
