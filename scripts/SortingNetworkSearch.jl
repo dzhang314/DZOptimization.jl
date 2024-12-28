@@ -10,6 +10,15 @@ const N = parse(Int, ARGS[2])
 if ARGS[1] == "W"
     const CONDITION_CODE = 'W'
     const CONDITION_TYPE = WeaklyNormalizedCondition{2 * N,N}
+elseif ARGS[1] == "I"
+    const CONDITION_CODE = 'I'
+    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,1}
+elseif ARGS[1] == "J"
+    const CONDITION_CODE = 'J'
+    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,2}
+elseif ARGS[1] == "K"
+    const CONDITION_CODE = 'K'
+    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,3}
 elseif ARGS[1] == "S"
     const CONDITION_CODE = 'S'
     const CONDITION_TYPE = StronglyNormalizedCondition{2 * N,N}
@@ -17,7 +26,7 @@ elseif ARGS[1] == "C"
     const CONDITION_CODE = 'C'
     const CONDITION_TYPE = CompletelyNormalizedCondition{2 * N,N}
 else
-    error("Invalid condition code $(ARGS[1]) (must be W, S, or C)")
+    error("Invalid condition code $(ARGS[1]) (must be W, I, J, K, S, or C)")
 end
 
 

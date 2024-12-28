@@ -1015,6 +1015,84 @@ function (cond::WeaklyNormalizedCondition{N,M})(
 end
 
 
+######################################## TEST CONDITION: INCOMPLETELY NORMALIZED
+
+
+export IncompletelyNormalizedCondition
+
+
+struct IncompletelyNormalizedCondition{N,M,K} <: AbstractTwoSumCondition{N}
+    function IncompletelyNormalizedCondition{N,M,K}() where {N,M,K}
+        @assert N >= M >= 1
+        @assert K >= 0
+        return new{N,M,K}()
+    end
+end
+
+
+@inline function _is_incompletely_normalized(a::T, b::T, k::Int) where {T}
+    if iszero(b)
+        return true
+    elseif iszero(a)
+        return false
+    else
+        return _unsafe_exponent(a) >= _unsafe_exponent(b) + (precision(T) - k)
+    end
+end
+
+
+@inline function _is_incompletely_normalized(
+    a::T, b::T, n::Int, k::Int,
+) where {T}
+    if iszero(b)
+        return true
+    elseif iszero(a)
+        return false
+    else
+        return (_unsafe_exponent(a) >=
+                _unsafe_exponent(b) + n * (precision(T) - k))
+    end
+end
+
+
+function (cond::IncompletelyNormalizedCondition{N,M,K})(
+    x::NTuple{N,T},
+) where {N,M,K,T}
+    @inbounds for i = 1:M-1
+        if !_is_incompletely_normalized(x[i], x[i+1], K)
+            return false
+        end
+    end
+    @inbounds first_limb = x[1]
+    @inbounds for i = M+1:N
+        if !_is_incompletely_normalized(first_limb, x[i], M, K)
+            return false
+        end
+    end
+    return true
+end
+
+
+function (cond::IncompletelyNormalizedCondition{N,M,K})(
+    x::AbstractVector{T},
+) where {N,M,K,T}
+    Base.require_one_based_indexing(x)
+    @assert length(x) == N
+    @inbounds for i = 1:M-1
+        if !_is_incompletely_normalized(x[i], x[i+1], K)
+            return false
+        end
+    end
+    @inbounds first_limb = x[1]
+    @inbounds for i = M+1:N
+        if !_is_incompletely_normalized(first_limb, x[i], M, K)
+            return false
+        end
+    end
+    return true
+end
+
+
 ############################################ TEST CONDITION: STRONGLY NORMALIZED
 
 
