@@ -12,13 +12,13 @@ if ARGS[1] == "W"
     const CONDITION_TYPE = WeaklyNormalizedCondition{2 * N,N}
 elseif ARGS[1] == "I"
     const CONDITION_CODE = 'I'
-    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,1}
+    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,2}
 elseif ARGS[1] == "J"
     const CONDITION_CODE = 'J'
-    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,2}
+    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,4}
 elseif ARGS[1] == "K"
     const CONDITION_CODE = 'K'
-    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,3}
+    const CONDITION_TYPE = IncompletelyNormalizedCondition{2 * N,N,6}
 elseif ARGS[1] == "S"
     const CONDITION_CODE = 'S'
     const CONDITION_TYPE = StronglyNormalizedCondition{2 * N,N}
