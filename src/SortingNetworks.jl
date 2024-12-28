@@ -686,6 +686,9 @@ function _generate(
     opt::SortingNetworkOptimizer{N,T,G,C},
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
     r = opt.pareto_radius
+    frontier_networks = Set(
+        network for (network, _) in opt.passing_networks if _lies_on_frontier(
+            (length(network) - r, depth(network) - r), opt.pareto_frontier))
     terminate = Atomic{Bool}(false)
     result = Ref{Tuple{SortingNetwork{N},Tuple{Int,Int}}}()
     @threads for _ = 1:nthreads()
@@ -698,9 +701,9 @@ function _generate(
                 canonize!(network)
                 result[] = (network, (len, dep))
             end
-            if !isempty(opt.passing_networks)
+            if !isempty(frontier_networks)
                 network = generate_mutation(
-                    rand(keys(opt.passing_networks)), opt.test_cases, opt.cond,
+                    rand(frontier_networks), opt.test_cases, opt.cond;
                     insertion_radius=3, replacement_radius=3, swap_radius=3)
                 len = length(network)
                 dep = depth(network)
