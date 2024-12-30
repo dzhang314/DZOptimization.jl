@@ -1564,7 +1564,7 @@ end
 ################################################## SORTING NETWORK VISUALIZATION
 
 
-export println_unicode
+export print_sorting_network
 
 
 const UNICODE_PADDING_CHARACTERS = Dict([
@@ -1579,7 +1579,7 @@ const UNICODE_PADDING_CHARACTERS = Dict([
 ])
 
 
-function println_padded_unicode(
+function print_padded_line(
     io::IO,
     line::AbstractVector{Char};
     spacing::Integer=3,
@@ -1598,7 +1598,7 @@ function println_padded_unicode(
 end
 
 
-function println_unicode(
+function print_sorting_network(
     io::IO,
     network::SortingNetwork{N};
     spacing::Integer=3,
@@ -1607,7 +1607,7 @@ function println_unicode(
     for (i, j) in network.comparators
         @assert i < j
         if any(line[k] != Char(0x2502) for k = i:j)
-            println_padded_unicode(io, line; spacing)
+            print_padded_line(io, line; spacing)
             fill!(line, Char(0x2502))
         end
         line[i] = Char(0x255E)
@@ -1617,13 +1617,13 @@ function println_unicode(
         end
     end
     if any(c != Char(0x2502) for c in line)
-        println_padded_unicode(io, line; spacing)
+        print_padded_line(io, line; spacing)
     end
 end
 
 
-println_unicode(network::SortingNetwork; spacing::Integer=3) =
-    println_unicode(stdout, network; spacing)
+print_sorting_network(network::SortingNetwork; spacing::Integer=3) =
+    print_sorting_network(stdout, network; spacing)
 
 
 end # module SortingNetworks
