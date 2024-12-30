@@ -491,6 +491,80 @@ function _passes_all_tests_without(
 end
 
 
+############################################################ TEST CASE SELECTION
+
+
+function _unsafe_compute_invalidation_set!(
+    temp::Vector{T},
+    test_case::NTuple{N,T},
+    cond::AbstractCondition{N},
+    networks::AbstractVector{SortingNetwork{N}},
+) where {N,T}
+    result = BitSet()
+    sizehint!(result, length(networks))
+    for (i, network) in pairs(networks)
+        if !_unsafe_passes_test!(temp, test_case, cond, network)
+            push!(result, i)
+        end
+    end
+    return result
+end
+
+
+function _split_range(range::AbstractUnitRange{Int}, n::Int, i::Int)
+    @assert 1 <= i <= n
+    q, r = divrem(length(range), n)
+    return UnitRange{Int}(
+        first(range) + min(i - 1, r) + (i - 1) * q,
+        first(range) + min(i, r) + i * q - 1)
+end
+
+
+function _compute_invalidation_sets(
+    test_cases::AbstractVector{NTuple{N,T}},
+    cond::AbstractCondition{N},
+    networks::AbstractVector{SortingNetwork{N}},
+) where {N,T}
+    result = similar(test_cases, BitSet)
+    num_threads = nthreads()
+    @threads :static for thread_index = 1:num_threads
+        temp = Vector{T}(undef, N)
+        for i = _split_range(eachindex(test_cases), num_threads, thread_index)
+            result[i] = _unsafe_compute_invalidation_set!(
+                temp, test_cases[i], cond, networks)
+        end
+    end
+    return result
+end
+
+
+function _greedy_set_covering!(sets::AbstractVector{BitSet})
+    result = Int[]
+    while !all(isempty, sets)
+        _, best_index = findmax(length, sets)
+        push!(result, best_index)
+        for other_index in eachindex(sets)
+            if other_index != best_index
+                setdiff!(sets[other_index], sets[best_index])
+            end
+        end
+        empty!(sets[best_index])
+    end
+    return result
+end
+
+
+function _maximal_sets(sets::AbstractVector{BitSet})
+    result = Int[]
+    for i in sortperm(sets; by=length, rev=true)
+        if !any(issubset(sets[i], sets[j]) for j in result)
+            push!(result, i)
+        end
+    end
+    return result
+end
+
+
 ##################################################### SORTING NETWORK GENERATION
 
 
@@ -600,48 +674,6 @@ function generate_mutation(
         end
     end
 end
-
-
-############################################################ TEST CASE SELECTION
-
-
-# export necessary_test_cases
-
-
-# function necessary_test_cases(
-#     test_cases::Set{Vector{T}},
-#     cond::AbstractCondition{N},
-#     networks::Set{SortingNetwork},
-# ) where {T,N}
-
-#     # Compute the set of networks that each test case invalidates.
-#     invalidation_sets = Dict{Vector{T},Set{SortingNetwork}}()
-#     for test_case in test_cases
-#         invalidated = Set{SortingNetwork}()
-#         for network in networks
-#             if !passes_test(test_case, cond, network)
-#                 push!(invalidated, network)
-#             end
-#         end
-#         invalidation_sets[test_case] = invalidated
-#     end
-
-#     # Greedily compute a set covering of the invalidated networks.
-#     result = Set{Vector{Float64}}()
-#     while !all(isempty, values(invalidation_sets))
-#         _, best_test_case = findmax(length, invalidation_sets)
-#         push!(result, best_test_case)
-#         for other_test_case in test_cases
-#             if other_test_case != best_test_case
-#                 setdiff!(invalidation_sets[other_test_case],
-#                     invalidation_sets[best_test_case])
-#             end
-#         end
-#         empty!(invalidation_sets[best_test_case])
-#     end
-
-#     return result
-# end
 
 
 ########################################################## COUNTEREXAMPLE SEARCH
@@ -1040,76 +1072,106 @@ end
 export combine
 
 
-_construct_invalidation_set(test_case, cond, networks) = BitSet(
-    i for i in eachindex(networks)
-    if !passes_test(test_case, cond, networks[i]))
-
 _construct_failure_set(test_cases, cond, network) = BitSet(
     i for i in eachindex(test_cases)
     if !passes_test(test_cases[i], cond, network))
 
 
 function combine(
-    optimizers::Vector{SortingNetworkOptimizer{N,T,G,C}},
+    optimizers::AbstractVecOrSet{SortingNetworkOptimizer{N,T,G,C}};
+    keep_failing_networks::Symbol, # :all, :none
+    keep_test_cases::Symbol, # :all, :maximal, :covering
+    num_outputs::Union{Int,Nothing}=nothing,
+    pareto_radius::Union{Int,Nothing}=nothing,
+    verbose::Bool=false,
 ) where {N,T,G<:AbstractTestGenerator{N,T},C<:AbstractCondition{N}}
+
+    @assert !isempty(optimizers)
+    _vprintln(verbose, "Checking validity of ", length(optimizers),
+        " input optimizers...")
 
     @assert allequal(opt.gen for opt in optimizers)
     gen = first(optimizers).gen
+    _vprintln(verbose, "All input optimizers have identical test generators.")
+
     @assert allequal(opt.cond for opt in optimizers)
     cond = first(optimizers).cond
-    @assert allequal(opt.num_outputs for opt in optimizers)
-    num_outputs = first(optimizers).num_outputs
-    @assert allequal(opt.pareto_radius for opt in optimizers)
-    pareto_radius = first(optimizers).pareto_radius
-    result = SortingNetworkOptimizer(gen, cond, num_outputs; pareto_radius)
+    _vprintln(verbose, "All input optimizers have identical conditions.")
 
-    all_pass_counts = mergewith(+,
-        [opt.passing_networks for opt in optimizers]...)
+    if isnothing(num_outputs)
+        @assert allequal(opt.num_outputs for opt in optimizers)
+        num_outputs = first(optimizers).num_outputs
+        _vprintln(verbose, "All input optimizers have identical outputs.")
+    end
+
+    if isnothing(pareto_radius)
+        @assert allequal(opt.pareto_radius for opt in optimizers)
+        pareto_radius = first(optimizers).pareto_radius
+        _vprintln(verbose, "All input optimizers have identical Pareto radii.")
+    end
+
+    _vprintln(verbose, "Extracting input optimizer data...")
+
     all_networks = collect(union(
         reduce(union, keys(opt.passing_networks) for opt in optimizers),
         reduce(union, keys(opt.failing_networks) for opt in optimizers)))
+    _vprintln(verbose, "Extracted ", length(all_networks),
+        " distinct sorting networks.")
+
     all_test_cases = unique!(sort!(reduce(vcat,
         opt.test_cases for opt in optimizers)))
+    _vprintln(verbose, "Extracted ", length(all_test_cases),
+        " distinct test cases.")
 
-    sets = [_construct_invalidation_set(test_case, cond, all_networks)
-            for test_case in all_test_cases]
+    all_pass_counts = mergewith(+,
+        [opt.passing_networks for opt in optimizers]...)
+    _vprintln(verbose, "Extracted ", length(all_pass_counts),
+        " distinct pass counts.")
 
-    maximal_set_indices = Int[]
-    for i in sortperm(sets; by=length, rev=true)
-        if !any(issubset(sets[i], sets[j]) for j in maximal_set_indices)
-            push!(maximal_set_indices, i)
+    _vprintln(verbose, "Running all sorting networks on all test cases...")
+    sets = _compute_invalidation_sets(all_test_cases, cond, all_networks)
+    failing_indices = reduce(union, sets)
+
+    if keep_test_cases == :all
+        _vprintln(verbose, "Keeping all test cases.")
+        desired_indices = eachindex(sets)
+    elseif keep_test_cases == :maximal
+        _vprintln(verbose, "Keeping maximally-invalidating test cases.")
+        desired_indices = _maximal_sets(sets)
+    elseif keep_test_cases == :covering
+        _vprintln(verbose, "Keeping a greedy covering set of test cases.")
+        desired_indices = _greedy_set_covering!(deepcopy(sets))
+    else
+        throw(ArgumentError(
+            "keep_test_cases must be :all, :maximal, or :covering."))
+    end
+
+    @assert failing_indices == reduce(union, sets[desired_indices])
+    result = SortingNetworkOptimizer(gen, cond, num_outputs; pareto_radius)
+    append!(result.test_cases, all_test_cases[desired_indices])
+
+    if keep_failing_networks == :all
+        _vprintln(verbose, "Keeping all failing networks.")
+        for i in failing_indices
+            network = all_networks[i]
+            set = _construct_failure_set(result.test_cases, cond, network)
+            @assert !isempty(set)
+            push!(result.failure_sets, network => set)
+            result.failing_networks[network] = lastindex(result.failure_sets)
         end
+    elseif keep_failing_networks == :none
+        _vprintln(verbose, "Discarding all failing networks.")
+    else
+        throw(ArgumentError("keep_failing_networks must be :all or :none."))
     end
 
-    for i in eachindex(sets)
-        @assert any(issubset(sets[i], sets[j]) for j in maximal_set_indices)
-    end
-
-    for i in maximal_set_indices
-        for j in maximal_set_indices
-            @assert (i == j) || !issubset(sets[i], sets[j])
-        end
-    end
-
-    for i in maximal_set_indices
-        push!(result.test_cases, all_test_cases[i])
-    end
-
-    failing_indices = collect(reduce(union, sets))
-    for i in failing_indices
-        network = all_networks[i]
-        set = _construct_failure_set(result.test_cases, cond, network)
-        @assert !isempty(set)
-        push!(result.failure_sets, network => set)
-        result.failing_networks[network] = lastindex(result.failure_sets)
-    end
-
-    passing_indices = setdiff(eachindex(all_networks), failing_indices)
-    for i in passing_indices
+    _vprintln(verbose, "Rebuilding Pareto frontier...")
+    for i in setdiff(eachindex(all_networks), failing_indices)
         network = all_networks[i]
         result.passing_networks[network] = all_pass_counts[network]
     end
     _rebuild_frontier!(result)
+    _vprintln(verbose, "Rebuilt Pareto frontier.")
 
     return result
 end
@@ -1559,6 +1621,8 @@ end
 (gen::MultiFloatTestGenerator{N,X,Y})() where {N,X,Y} = _riffle(
     _top_down_renormalize(ntuple(_ -> _generate_random_float(), Val{X}())),
     _top_down_renormalize(ntuple(_ -> _generate_random_float(), Val{Y}())))
+# Benchmarks show that _top_down_renormalize is roughly
+# 10-20% faster than _bottom_up_renormalize for this purpose.
 
 
 ################################################## SORTING NETWORK VISUALIZATION
