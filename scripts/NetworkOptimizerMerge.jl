@@ -37,7 +37,7 @@ for prefix in [
 
     println("Saving (maximal)...")
     flush(stdout)
-    save_object("$(prefix)-Maximal-02.jld2", max_opt)
+    save_object("$(prefix)-Maximal.jld2", max_opt)
 
     println("Merging (minimal)...")
     flush(stdout)
@@ -50,7 +50,7 @@ for prefix in [
 
     println("Saving (minimal)...")
     flush(stdout)
-    save_object("$(prefix)-Minimal-02.jld2", min_opt)
+    save_object("$(prefix)-Minimal.jld2", min_opt)
 
     println("Finished merging ", prefix, ".")
     flush(stdout)

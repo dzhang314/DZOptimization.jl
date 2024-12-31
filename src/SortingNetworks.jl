@@ -177,10 +177,11 @@ function sort_code(
         y = Int(y)
         i = generation[x]
         j = generation[y]
+        inputs = [(x, i), (y, j)]
         i_next = i + 1
         j_next = j + 1
-        push!(code, Instruction(:minmax,
-            [(x, i_next), (y, j_next)], [(x, i), (y, j)]))
+        outputs = [(x, i_next), (y, j_next)]
+        push!(code, Instruction(:minmax, outputs, inputs))
         generation[x] = i_next
         generation[y] = j_next
     end
@@ -494,7 +495,10 @@ end
 ############################################################ TEST CASE SELECTION
 
 
-function _unsafe_compute_invalidation_set!(
+export invalidation_sets, greedy_set_cover!, maximal_sets
+
+
+function _unsafe_invalidation_set!(
     temp::Vector{T},
     test_case::NTuple{N,T},
     cond::AbstractCondition{N},
@@ -520,7 +524,7 @@ function _split_range(range::AbstractUnitRange{Int}, n::Int, i::Int)
 end
 
 
-function _compute_invalidation_sets(
+function invalidation_sets(
     test_cases::AbstractVector{NTuple{N,T}},
     cond::AbstractCondition{N},
     networks::AbstractVector{SortingNetwork{N}},
@@ -530,7 +534,7 @@ function _compute_invalidation_sets(
     @threads :static for thread_index = 1:num_threads
         temp = Vector{T}(undef, N)
         for i = _split_range(eachindex(test_cases), num_threads, thread_index)
-            result[i] = _unsafe_compute_invalidation_set!(
+            result[i] = _unsafe_invalidation_set!(
                 temp, test_cases[i], cond, networks)
         end
     end
@@ -538,7 +542,7 @@ function _compute_invalidation_sets(
 end
 
 
-function _greedy_set_covering!(sets::AbstractVector{BitSet})
+function greedy_set_cover!(sets::AbstractVector{BitSet})
     result = Int[]
     while !all(isempty, sets)
         _, best_index = findmax(length, sets)
@@ -554,7 +558,7 @@ function _greedy_set_covering!(sets::AbstractVector{BitSet})
 end
 
 
-function _maximal_sets(sets::AbstractVector{BitSet})
+function maximal_sets(sets::AbstractVector{BitSet})
     result = Int[]
     for i in sortperm(sets; by=length, rev=true)
         if !any(issubset(sets[i], sets[j]) for j in result)
@@ -1129,18 +1133,18 @@ function combine(
         " distinct pass counts.")
 
     _vprintln(verbose, "Running all sorting networks on all test cases...")
-    sets = _compute_invalidation_sets(all_test_cases, cond, all_networks)
+    sets = invalidation_sets(all_test_cases, cond, all_networks)
     failing_indices = reduce(union, sets)
 
     if keep_test_cases == :all
         _vprintln(verbose, "Keeping all test cases.")
-        desired_indices = eachindex(sets)
+        desired_indices = sortperm(sets; by=length, rev=true)
     elseif keep_test_cases == :maximal
         _vprintln(verbose, "Keeping maximally-invalidating test cases.")
-        desired_indices = _maximal_sets(sets)
+        desired_indices = maximal_sets(sets)
     elseif keep_test_cases == :covering
         _vprintln(verbose, "Keeping a greedy covering set of test cases.")
-        desired_indices = _greedy_set_covering!(deepcopy(sets))
+        desired_indices = greedy_set_cover!(deepcopy(sets))
     else
         throw(ArgumentError(
             "keep_test_cases must be :all, :maximal, or :covering."))
