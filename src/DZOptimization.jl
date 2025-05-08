@@ -1,41 +1,7 @@
 module DZOptimization
 
 
-################################################################################
-
-
-export assert_valid, step!
-
-
-function assert_valid end
-function step! end
-
-
-################################################################################
-
-
-export branch_free_minmax, two_sum
-
-
-@inline branch_free_minmax(x::T, y::T) where {T} =
-    ifelse(x > y, (y, x), (x, y))
-
-
-@inline function two_sum(a::T, b::T) where {T}
-    s = a + b
-    a_eff = s - b
-    b_eff = s - a_eff
-    a_err = a - a_eff
-    b_err = b - b_eff
-    e = a_err + b_err
-    return (s, e)
-end
-
-
-################################################################################
-
-
-include("SortingNetworks.jl")
+@inline NULL_CONSTRAINT(_...) = true
 
 
 #=
@@ -47,9 +13,6 @@ using .Kernels: dot, norm2, inv_norm, negate!, scale!, delta!, axpy!
 
 
 ######################################################### OPTIMIZATION UTILITIES
-
-
-@inline NULL_CONSTRAINT(_...) = true
 
 
 struct LineSearchEvaluator{C,F,T,N}
