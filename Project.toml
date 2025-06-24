@@ -3,8 +3,5 @@ uuid = "7e4c8b08-07ea-4d35-9260-462b5bfff2a0"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
 version = "0.6.0"
 
-[deps]
-Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-
 [compat]
 julia = "1"
