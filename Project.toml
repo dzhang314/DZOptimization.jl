@@ -3,5 +3,9 @@ uuid = "7e4c8b08-07ea-4d35-9260-462b5bfff2a0"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
 version = "0.6.0"
 
+[deps]
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+
 [compat]
-julia = "1"
+julia = "^1.10"
+KernelAbstractions = "^0.9.34"
