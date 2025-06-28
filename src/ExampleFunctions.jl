@@ -1,14 +1,11 @@
 module ExampleFunctions
 
-
 using KernelAbstractions: allocate, get_backend,
     @kernel, @Const, @index, @uniform
-
 
 # TODO: twice(x) and square(x) should be moved into MultiFloats.jl v3.
 @inline twice(x) = x + x
 @inline square(x) = x * x
-
 
 ######################################################## RADIAL ENERGY FUNCTIONS
 
@@ -92,17 +89,17 @@ function pairwise_radial_energy(
 
     _zero = zero(T)
 
-    point_axis = axes(x, 1)
-    @assert (point_axis,) == axes(x)
-    @assert (point_axis,) == axes(y)
-    @assert (point_axis,) == axes(z)
+    particle_axis = axes(x, 1)
+    @assert (particle_axis,) == axes(x)
+    @assert (particle_axis,) == axes(y)
+    @assert (particle_axis,) == axes(z)
 
     energy = _zero
-    @inbounds for i in point_axis
+    @inbounds for i in particle_axis
         xi = x[i]
         yi = y[i]
         zi = z[i]
-        @simd for j = i+one(i):last(point_axis)
+        @simd for j = i+one(i):last(particle_axis)
             xj = x[j]
             yj = y[j]
             zj = z[j]
@@ -128,7 +125,7 @@ end
 
     @uniform _zero = zero(T)
     @uniform _one = one(T)
-    @uniform _two = _one + _one
+    @uniform _two = twice(_one)
     @uniform _half = inv(_two)
 
     i = @index(Global, Linear)
@@ -188,22 +185,22 @@ function pairwise_radial_gradient!(
 
     _zero = zero(T)
 
-    point_axis = axes(gx, 1)
-    @assert (point_axis,) == axes(gx)
-    @assert (point_axis,) == axes(gy)
-    @assert (point_axis,) == axes(gz)
-    @assert (point_axis,) == axes(x)
-    @assert (point_axis,) == axes(y)
-    @assert (point_axis,) == axes(z)
+    particle_axis = axes(gx, 1)
+    @assert (particle_axis,) == axes(gx)
+    @assert (particle_axis,) == axes(gy)
+    @assert (particle_axis,) == axes(gz)
+    @assert (particle_axis,) == axes(x)
+    @assert (particle_axis,) == axes(y)
+    @assert (particle_axis,) == axes(z)
 
-    @inbounds for i in point_axis
+    @inbounds for i in particle_axis
         xi = x[i]
         yi = y[i]
         zi = z[i]
         ax = _zero
         ay = _zero
         az = _zero
-        @simd for j in point_axis
+        @simd for j in particle_axis
             xj = x[j]
             yj = y[j]
             zj = z[j]
@@ -313,18 +310,18 @@ function pairwise_radial_hvp!(
 
     _zero = zero(T)
 
-    point_axis = axes(px, 1)
-    @assert (point_axis,) == axes(px)
-    @assert (point_axis,) == axes(py)
-    @assert (point_axis,) == axes(pz)
-    @assert (point_axis,) == axes(x)
-    @assert (point_axis,) == axes(y)
-    @assert (point_axis,) == axes(z)
-    @assert (point_axis,) == axes(u)
-    @assert (point_axis,) == axes(v)
-    @assert (point_axis,) == axes(w)
+    particle_axis = axes(px, 1)
+    @assert (particle_axis,) == axes(px)
+    @assert (particle_axis,) == axes(py)
+    @assert (particle_axis,) == axes(pz)
+    @assert (particle_axis,) == axes(x)
+    @assert (particle_axis,) == axes(y)
+    @assert (particle_axis,) == axes(z)
+    @assert (particle_axis,) == axes(u)
+    @assert (particle_axis,) == axes(v)
+    @assert (particle_axis,) == axes(w)
 
-    @inbounds for i in point_axis
+    @inbounds for i in particle_axis
         xi = x[i]
         yi = y[i]
         zi = z[i]
@@ -334,7 +331,7 @@ function pairwise_radial_hvp!(
         ax = _zero
         ay = _zero
         az = _zero
-        @simd for j in point_axis
+        @simd for j in particle_axis
             xj = x[j]
             yj = y[j]
             zj = z[j]
@@ -470,5 +467,73 @@ function accelerated_pairwise_radial_hvp!(
     return nothing
 end
 
+
+################################################################################
+
+
+export pairwise_radial_energy_delta
+
+
+function pairwise_radial_energy_delta(
+    energy_function::F,
+    x::AbstractVector{T},
+    y::AbstractVector{T},
+    z::AbstractVector{T},
+    i::I,
+    x_new::T,
+    y_new::T,
+    z_new::T,
+) where {F,T,I}
+
+    _zero = zero(T)
+
+    particle_axis = axes(x, 1)
+    @assert (particle_axis,) == axes(x)
+    @assert (particle_axis,) == axes(y)
+    @assert (particle_axis,) == axes(z)
+    @assert i in particle_axis
+
+    energy_old = _zero
+    energy_new = _zero
+    @inbounds begin
+        x_old = x[i]
+        y_old = y[i]
+        z_old = z[i]
+        @simd for j in first(particle_axis):i-one(i)
+            xj = x[j]
+            yj = y[j]
+            zj = z[j]
+            dx_old = x_old - xj
+            dy_old = y_old - yj
+            dz_old = z_old - zj
+            r2_old = square(dx_old) + square(dy_old) + square(dz_old)
+            energy_old += energy_function(r2_old)
+            dx_new = x_new - xj
+            dy_new = y_new - yj
+            dz_new = z_new - zj
+            r2_new = square(dx_new) + square(dy_new) + square(dz_new)
+            energy_new += energy_function(r2_new)
+        end
+        @simd for j in i+one(i):last(particle_axis)
+            xj = x[j]
+            yj = y[j]
+            zj = z[j]
+            dx_old = x_old - xj
+            dy_old = y_old - yj
+            dz_old = z_old - zj
+            r2_old = square(dx_old) + square(dy_old) + square(dz_old)
+            energy_old += energy_function(r2_old)
+            dx_new = x_new - xj
+            dy_new = y_new - yj
+            dz_new = z_new - zj
+            r2_new = square(dx_new) + square(dy_new) + square(dz_new)
+            energy_new += energy_function(r2_new)
+        end
+    end
+    return energy_new - energy_old
+end
+
+
+################################################################################
 
 end # module ExampleFunctions
