@@ -23,7 +23,7 @@ export lj_energy, lj_first_derivative, lj_second_derivative
     inv_r4 = square(inv_r2)
     inv_r6 = inv_r4 * inv_r2
 
-    return _four * fma(inv_r6, inv_r6, -inv_r6)
+    return _four * muladd(inv_r6, inv_r6, -inv_r6)
 end
 
 
@@ -43,7 +43,7 @@ end
 
     # TODO: Benchmark twice(inv_r8) instead of twice(inv_r6).
     # Accuracy should be identical, but there may be a performance benefit.
-    return _neg_twelve * fma(inv_r8, twice(inv_r6), -inv_r8)
+    return _neg_twelve * muladd(inv_r8, twice(inv_r6), -inv_r8)
 end
 
 
@@ -67,8 +67,8 @@ end
 
     # TODO: Benchmark variations of this formula.
     # The following variant may improve accuracy.
-    # return _forty_eight * fma(_seven_halves * inv_r8, inv_r8, -inv_r10)
-    return _forty_eight * fma(_seven_halves, square(inv_r8), -inv_r10)
+    # return _forty_eight * muladd(_seven_halves * inv_r8, inv_r8, -inv_r10)
+    return _forty_eight * muladd(_seven_halves, square(inv_r8), -inv_r10)
 end
 
 
