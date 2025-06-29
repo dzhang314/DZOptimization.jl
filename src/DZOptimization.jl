@@ -1,7 +1,7 @@
 module DZOptimization
 
 using KernelAbstractions: get_backend
-using LinearAlgebra: axpby!, axpy!, dot, norm
+using LinearAlgebra: axpby!, axpy!, dot, norm, rmul!
 
 ################################################################################
 
@@ -299,9 +299,210 @@ function step!(opt::AdGDOptimizer{T,A,C,F,G}) where {T,A,C,F,G}
     opt.current_step_size[] = next_step_size
 
     take_backtracking_step!(opt, -next_step_size, opt.current_gradient)
+    if opt.is_stuck[]
+        return opt
+    end
+
     copy!(opt.delta_gradient, opt.current_gradient)
     opt.gradient_function!(opt.current_gradient, opt.current_point)
     axpby!(_one, opt.current_gradient, -_one, opt.delta_gradient)
+
+    opt.iteration_count[] += 1
+    return opt
+end
+
+
+######################################################################### L-BFGS
+
+
+export LBFGSOptimizer
+
+
+struct LBFGSOptimizer{T,A,C,F,G} <: AbstractOptimizer{T,A}
+
+    constraint_function!::C
+    objective_function::F
+    gradient_function!::G
+
+    is_stuck::Array{Bool,0}
+    iteration_count::Array{Int,0}
+
+    current_point::A
+    delta_point::A
+    current_objective_value::Array{T,0}
+    delta_objective_value::Array{T,0}
+    current_gradient::A
+    delta_gradient::A
+
+    step_direction::A
+    history_length::Int
+    delta_point_history::Vector{A}
+    delta_gradient_history::Vector{A}
+    alpha_history::Vector{T}
+    rho_history::Vector{T}
+
+end
+
+
+function LBFGSOptimizer(
+    constraint_function!::C,
+    objective_function::F,
+    gradient_function!::G,
+    initial_point::A,
+    initial_objective_value::T,
+    initial_gradient::A,
+    initial_step_length::T,
+    history_length::Int,
+) where {T,A<:AbstractArray{T},C,F,G}
+
+    _zero = zero(T)
+
+    point_axes = axes(initial_point)
+    @assert point_axes == axes(initial_gradient)
+
+    backend = get_backend(initial_point)
+    @assert backend == get_backend(initial_gradient)
+
+    delta_point = similar(initial_point)
+    @assert point_axes == axes(delta_point)
+    @assert backend == get_backend(delta_point)
+    fill!(delta_point, _zero)
+
+    delta_gradient = similar(initial_gradient)
+    @assert point_axes == axes(delta_gradient)
+    @assert backend == get_backend(delta_gradient)
+    fill!(delta_gradient, _zero)
+
+    step_direction = similar(initial_gradient)
+    @assert point_axes == axes(step_direction)
+    @assert backend == get_backend(step_direction)
+
+    @assert initial_step_length > _zero
+    initial_gradient_norm = norm(initial_gradient)
+    is_stuck = iszero(initial_gradient_norm)
+    if is_stuck
+        fill!(step_direction, _zero)
+    else
+        copy!(step_direction, initial_gradient)
+        rmul!(step_direction, -initial_step_length / initial_gradient_norm)
+    end
+
+    return LBFGSOptimizer{T,A,C,F,G}(
+        constraint_function!, objective_function, gradient_function!,
+        fill(is_stuck), fill(0),
+        initial_point, delta_point,
+        fill(initial_objective_value), fill(_zero),
+        initial_gradient, delta_gradient,
+        step_direction, history_length, A[], A[], T[], T[])
+end
+
+
+function LBFGSOptimizer(
+    constraint_function!::C,
+    objective_function::F,
+    gradient_function!::G,
+    initial_point::A,
+    initial_step_length::T,
+    history_length::Int,
+) where {T,A<:AbstractArray{T},C,F,G}
+
+    point_axes = axes(initial_point)
+    backend = get_backend(initial_point)
+
+    if !isnothing(constraint_function!)
+        @assert constraint_function!(initial_point)
+    end
+
+    initial_objective_value = objective_function(initial_point)
+
+    initial_gradient = similar(initial_point)
+    @assert point_axes == axes(initial_gradient)
+    @assert backend == get_backend(initial_gradient)
+    gradient_function!(initial_gradient, initial_point)
+
+    return LBFGSOptimizer(
+        constraint_function!, objective_function, gradient_function!,
+        initial_point, initial_objective_value, initial_gradient,
+        initial_step_length, history_length)
+end
+
+
+function compute_lbfgs_step_direction!(
+    step_direction::A,
+    gradient::A,
+    s::Vector{A},
+    y::Vector{A},
+    alpha::Vector{T},
+    rho::Vector{T},
+) where {T,A}
+    copy!(step_direction, gradient)
+    for i in eachindex(s, y, alpha, rho)
+        alpha[i] = dot(s[i], step_direction) / rho[i]
+        axpy!(-alpha[i], y[i], step_direction)
+    end
+    if !isempty(eachindex(s, y, alpha, rho))
+        rmul!(step_direction, -rho[1] / dot(y[1], y[1]))
+    end
+    for i in Iterators.reverse(eachindex(s, y, alpha, rho))
+        beta = dot(y[i], step_direction) / rho[i]
+        axpy!(-(alpha[i] + beta), s[i], step_direction)
+    end
+    return step_direction
+end
+
+
+function step!(opt::LBFGSOptimizer{T,A,C,F,G}) where {T,A,C,F,G}
+
+    if opt.is_stuck[]
+        return opt
+    end
+
+    _zero = zero(T)
+    _one = one(T)
+
+    if opt.iteration_count[] > 0
+        compute_lbfgs_step_direction!(
+            opt.step_direction,
+            opt.current_gradient,
+            opt.delta_point_history,
+            opt.delta_gradient_history,
+            opt.alpha_history,
+            opt.rho_history)
+    end
+
+    take_backtracking_step!(opt, _one, opt.step_direction)
+    if opt.is_stuck[]
+        return opt
+    end
+
+    copy!(opt.delta_gradient, opt.current_gradient)
+    opt.gradient_function!(opt.current_gradient, opt.current_point)
+    axpby!(_one, opt.current_gradient, -_one, opt.delta_gradient)
+
+    if length(opt.delta_point_history) < opt.history_length
+        pushfirst!(opt.delta_point_history, copy(opt.delta_point))
+    else
+        delta_point = pop!(opt.delta_point_history)
+        copy!(delta_point, opt.delta_point)
+        pushfirst!(opt.delta_point_history, delta_point)
+    end
+
+    if length(opt.delta_gradient_history) < opt.history_length
+        pushfirst!(opt.delta_gradient_history, copy(opt.delta_gradient))
+    else
+        delta_gradient = pop!(opt.delta_gradient_history)
+        copy!(delta_gradient, opt.delta_gradient)
+        pushfirst!(opt.delta_gradient_history, delta_gradient)
+    end
+
+    if length(opt.alpha_history) < opt.history_length
+        push!(opt.alpha_history, _zero)
+    end
+
+    if length(opt.rho_history) >= opt.history_length
+        pop!(opt.rho_history)
+    end
+    pushfirst!(opt.rho_history, dot(opt.delta_point, opt.delta_gradient))
 
     opt.iteration_count[] += 1
     return opt
