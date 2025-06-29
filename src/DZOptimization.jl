@@ -101,7 +101,7 @@ export step!
 function step! end
 
 
-################################################################################
+###################################################### ADAPTIVE GRADIENT DESCENT
 
 
 export AdGDOptimizer
