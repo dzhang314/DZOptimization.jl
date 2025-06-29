@@ -107,6 +107,23 @@ function step! end
 export AdGDOptimizer
 
 
+"""
+`AdGDOptimizer` implements the adaptive gradient descent algorithm (AdGD)
+proposed by Yura Malitsky and Konstantin Mishchenko in the ICML 2020 paper
+
+    [MM20] "Adaptive Gradient Descent without Descent"
+    https://arxiv.org/abs/1910.09529
+    https://dl.acm.org/doi/10.5555/3524938.3525560
+
+and further improved by the same authors in the NeurIPS 2024 paper
+
+    [MM24] "Adaptive Proximal Gradient Method for Convex Optimization"
+    https://arxiv.org/abs/2308.02261
+    https://dl.acm.org/doi/10.5555/3737916.3741109
+
+The algorithm implemented here is Algorithm 1 from the original paper [MM20].
+Implementation of the improvements described in [MM24] is work in progress.
+"""
 struct AdGDOptimizer{C,F,G,T,A}
 
     constraint_function!::C
