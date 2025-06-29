@@ -9,7 +9,7 @@ using LinearAlgebra: axpby!, axpy!, dot, norm
 export LineSearchEvaluator
 
 
-struct LineSearchEvaluator{C,F,G,T,A}
+struct LineSearchEvaluator{T,A,C,F,G}
     constraint_function!::C
     objective_function::F
     gradient_function!::G
@@ -35,7 +35,7 @@ function LineSearchEvaluator(
     initial_gradient::A,
     step_direction::A,
     overlap::T,
-) where {C,F,G,T,A<:AbstractArray{T}}
+) where {T,A<:AbstractArray{T},C,F,G}
 
     point_axes = axes(initial_point)
     @assert point_axes == axes(initial_gradient)
@@ -53,7 +53,7 @@ function LineSearchEvaluator(
     @assert point_axes == axes(trial_gradient)
     @assert backend == get_backend(trial_gradient)
 
-    return LineSearchEvaluator{C,F,G,T,A}(
+    return LineSearchEvaluator{T,A,C,F,G}(
         constraint_function!, objective_function, gradient_function!,
         initial_point, fill(initial_objective_value), initial_gradient,
         step_direction, fill(overlap),
@@ -62,10 +62,10 @@ function LineSearchEvaluator(
 end
 
 
-function (lse::LineSearchEvaluator{C,F,G,T,A})(
+function (lse::LineSearchEvaluator{T,A,C,F,G})(
     step_size::T,
     compute_gradient::Bool,
-) where {C,F,G,T,A}
+) where {T,A<:AbstractArray{T},C,F,G}
     copy!(lse.trial_point, lse.current_point)
     axpy!(step_size, lse.step_direction, lse.trial_point)
     if !isnothing(lse.constraint_function!)
@@ -95,10 +95,63 @@ end
 ################################################################################
 
 
-export step!
+export AbstractOptimizer, step!
+
+
+abstract type AbstractOptimizer{T,A} end
 
 
 function step! end
+
+
+function take_backtracking_step!(
+    opt::AbstractOptimizer{T,A},
+    step_size::T,
+    step_direction::A,
+) where {T,A}
+
+    _one = one(T)
+    _two = _one + _one
+    _half = inv(_two)
+
+    # Make a copy of the current point in case we need to backtrack.
+    copy!(opt.delta_point, opt.current_point)
+
+    # Begin backtracking loop.
+    while true
+
+        # Take a step of the specified size in the specified direction.
+        axpy!(step_size, step_direction, opt.current_point)
+
+        # If the step was so small that we didn't change any
+        # coordinate of the current point, then we are stuck.
+        if isequal(opt.current_point, opt.delta_point)
+            opt.is_stuck[] = true
+            return opt
+        end
+
+        # If projection into the feasible region succeeds...
+        if (isnothing(opt.constraint_function!) ||
+            opt.constraint_function!(opt.current_point))
+
+            # ...and the objective value strictly decreases...
+            next_objective_value = opt.objective_function(opt.current_point)
+            if next_objective_value < opt.current_objective_value[]
+
+                # ...then we record the decrease and accept the step.
+                opt.delta_objective_value[] =
+                    next_objective_value - opt.current_objective_value[]
+                opt.current_objective_value[] = next_objective_value
+                axpby!(_one, opt.current_point, -_one, opt.delta_point)
+                return opt
+            end
+        end
+
+        # Otherwise, we backtrack, halve the step size, and try again.
+        copy!(opt.current_point, opt.delta_point)
+        step_size *= _half
+    end
+end
 
 
 ###################################################### ADAPTIVE GRADIENT DESCENT
@@ -123,7 +176,7 @@ and further improved by the same authors in the NeurIPS 2024 paper
 
 The algorithm implemented here is Algorithm 1 from the second paper [MM24].
 """
-struct AdGDOptimizer{C,F,G,T,A}
+struct AdGDOptimizer{T,A,C,F,G} <: AbstractOptimizer{T,A}
 
     constraint_function!::C
     objective_function::F
@@ -153,7 +206,7 @@ function AdGDOptimizer(
     initial_objective_value::T,
     initial_gradient::A,
     initial_step_length::T,
-) where {C,F,G,T,A<:AbstractArray{T}}
+) where {T,A<:AbstractArray{T},C,F,G}
 
     _zero = zero(T)
 
@@ -179,7 +232,7 @@ function AdGDOptimizer(
     initial_step_size =
         is_stuck ? _zero : initial_step_length / initial_gradient_norm
 
-    return AdGDOptimizer{C,F,G,T,A}(
+    return AdGDOptimizer{T,A,C,F,G}(
         constraint_function!, objective_function, gradient_function!,
         fill(is_stuck), fill(0),
         initial_point, delta_point,
@@ -195,7 +248,7 @@ function AdGDOptimizer(
     gradient_function!::G,
     initial_point::A,
     initial_step_length::T,
-) where {C,F,G,T,A<:AbstractArray{T}}
+) where {T,A<:AbstractArray{T},C,F,G}
 
     point_axes = axes(initial_point)
     backend = get_backend(initial_point)
@@ -218,7 +271,7 @@ function AdGDOptimizer(
 end
 
 
-function step!(opt::AdGDOptimizer{C,F,G,T,A}) where {C,F,G,T,A}
+function step!(opt::AdGDOptimizer{T,A,C,F,G}) where {T,A,C,F,G}
 
     if opt.is_stuck[]
         return opt
@@ -245,28 +298,7 @@ function step!(opt::AdGDOptimizer{C,F,G,T,A}) where {C,F,G,T,A}
     opt.previous_step_size[] = current_step_size
     opt.current_step_size[] = next_step_size
 
-    copy!(opt.delta_point, opt.current_point)
-    while true
-        axpy!(-next_step_size, opt.current_gradient, opt.current_point)
-        if isequal(opt.current_point, opt.delta_point)
-            opt.is_stuck[] = true
-            return opt
-        end
-        if (isnothing(opt.constraint_function!) ||
-            opt.constraint_function!(opt.current_point))
-            next_objective_value = opt.objective_function(opt.current_point)
-            if next_objective_value < opt.current_objective_value[]
-                opt.delta_objective_value[] =
-                    next_objective_value - opt.current_objective_value[]
-                opt.current_objective_value[] = next_objective_value
-                break
-            end
-        end
-        copy!(opt.current_point, opt.delta_point)
-        next_step_size *= _half
-    end
-    axpby!(_one, opt.current_point, -_one, opt.delta_point)
-
+    take_backtracking_step!(opt, -next_step_size, opt.current_gradient)
     copy!(opt.delta_gradient, opt.current_gradient)
     opt.gradient_function!(opt.current_gradient, opt.current_point)
     axpby!(_one, opt.current_gradient, -_one, opt.delta_gradient)
