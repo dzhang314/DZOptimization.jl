@@ -121,8 +121,7 @@ and further improved by the same authors in the NeurIPS 2024 paper
     https://arxiv.org/abs/2308.02261
     https://dl.acm.org/doi/10.5555/3737916.3741109
 
-The algorithm implemented here is Algorithm 1 from the original paper [MM20].
-Implementation of the improvements described in [MM24] is work in progress.
+The algorithm implemented here is Algorithm 1 from the second paper [MM24].
 """
 struct AdGDOptimizer{C,F,G,T,A}
 
@@ -140,8 +139,8 @@ struct AdGDOptimizer{C,F,G,T,A}
     current_gradient::A
     delta_gradient::A
 
-    current_lambda::Array{T,0}
-    previous_lambda::Array{T,0}
+    current_step_size::Array{T,0}
+    previous_step_size::Array{T,0}
 
 end
 
@@ -174,15 +173,19 @@ function AdGDOptimizer(
     @assert backend == get_backend(delta_gradient)
     fill!(delta_gradient, _zero)
 
-    initial_lambda = abs(initial_step_length) / norm(initial_gradient)
+    @assert initial_step_length > _zero
+    initial_gradient_norm = norm(initial_gradient)
+    is_stuck = iszero(initial_gradient_norm)
+    initial_step_size =
+        is_stuck ? _zero : initial_step_length / initial_gradient_norm
 
     return AdGDOptimizer{C,F,G,T,A}(
         constraint_function!, objective_function, gradient_function!,
-        fill(false), fill(0),
+        fill(is_stuck), fill(0),
         initial_point, delta_point,
         fill(initial_objective_value), fill(_zero),
         initial_gradient, delta_gradient,
-        fill(initial_lambda), fill(initial_lambda))
+        fill(initial_step_size), fill(initial_step_size))
 end
 
 
@@ -196,6 +199,10 @@ function AdGDOptimizer(
 
     point_axes = axes(initial_point)
     backend = get_backend(initial_point)
+
+    if !isnothing(constraint_function!)
+        @assert constraint_function!(initial_point)
+    end
 
     initial_objective_value = objective_function(initial_point)
 
@@ -220,22 +227,27 @@ function step!(opt::AdGDOptimizer{C,F,G,T,A}) where {C,F,G,T,A}
     _one = one(T)
     _two = _one + _one
     _half = inv(_two)
+    _inv_sqrt_two = sqrt(_half)
 
-    previous_lambda = opt.previous_lambda[]
-    current_lambda = opt.current_lambda[]
-    if opt.iteration_count[] == 0
-        next_lambda = current_lambda
-    else
-        theta = current_lambda / previous_lambda
-        next_lambda = min(sqrt(_one + theta) * current_lambda,
-            _half * norm(opt.delta_point) / norm(opt.delta_gradient))
+    previous_step_size = opt.previous_step_size[]
+    current_step_size = opt.current_step_size[]
+    next_step_size = current_step_size
+    if opt.iteration_count[] > 0
+        @assert !iszero(previous_step_size)
+        theta = current_step_size / previous_step_size
+        next_step_size *= sqrt(_one + theta)
+        delta_gradient_norm = norm(opt.delta_gradient)
+        if !iszero(delta_gradient_norm)
+            inv_L = norm(opt.delta_point) / delta_gradient_norm
+            next_step_size = min(next_step_size, _inv_sqrt_two * inv_L)
+        end
     end
-    opt.previous_lambda[] = current_lambda
-    opt.current_lambda[] = next_lambda
+    opt.previous_step_size[] = current_step_size
+    opt.current_step_size[] = next_step_size
 
     copy!(opt.delta_point, opt.current_point)
     while true
-        axpy!(-next_lambda, opt.current_gradient, opt.current_point)
+        axpy!(-next_step_size, opt.current_gradient, opt.current_point)
         if isequal(opt.current_point, opt.delta_point)
             opt.is_stuck[] = true
             return opt
@@ -251,7 +263,7 @@ function step!(opt::AdGDOptimizer{C,F,G,T,A}) where {C,F,G,T,A}
             end
         end
         copy!(opt.current_point, opt.delta_point)
-        next_lambda *= _half
+        next_step_size *= _half
     end
     axpby!(_one, opt.current_point, -_one, opt.delta_point)
 
